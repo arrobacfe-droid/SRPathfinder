@@ -1,0 +1,103 @@
+{
+  "theme": "Light",
+  "archetype": "4 (Swiss & High-Contrast)",
+  "emotional_tone": "Authority, clarity, function-first, precise",
+  "typography": {
+    "fonts": {
+      "headings": "Cabinet Grotesk",
+      "body": "IBM Plex Sans",
+      "mono": "IBM Plex Mono"
+    },
+    "hierarchy": {
+      "h1": "text-4xl sm:text-5xl tracking-tight font-bold text-slate-950",
+      "h2": "text-2xl sm:text-3xl tracking-tight font-semibold text-slate-900",
+      "h3": "text-xl font-medium tracking-tight text-slate-900",
+      "body": "text-base leading-relaxed text-slate-700",
+      "small_label": "text-xs font-semibold uppercase tracking-[0.2em] text-slate-500"
+    }
+  },
+  "colors": {
+    "background": {
+      "primary": "#FFFFFF",
+      "secondary": "#F8FAFC",
+      "panel": "#FFFFFF"
+    },
+    "text": {
+      "primary": "#0A0A0A",
+      "secondary": "#475569",
+      "tertiary": "#94A3B8"
+    },
+    "accents": {
+      "primary": "#005FB8",
+      "primary_hover": "#004A94",
+      "destructive": "#E11D48",
+      "success": "#10B981"
+    },
+    "borders": {
+      "default": "#E2E8F0",
+      "focus": "#005FB8"
+    }
+  },
+  "layout": {
+    "strategy": "Map-Centric with Floating Panels (F-Pattern)",
+    "container": "h-screen w-full flex overflow-hidden bg-slate-50 relative",
+    "sidebar_left": "absolute top-4 left-4 bottom-4 w-80 bg-white border border-slate-200 shadow-lg rounded-xl z-10 flex flex-col overflow-hidden",
+    "map_area": "flex-1 w-full h-full",
+    "side_panel_right": "absolute top-0 right-0 bottom-0 w-96 bg-white border-l border-slate-200 shadow-2xl z-20 transform transition-transform duration-300 ease-in-out",
+    "spacing": {
+      "padding_standard": "p-6",
+      "padding_dense": "p-4",
+      "gap_standard": "gap-6",
+      "gap_dense": "gap-4"
+    }
+  },
+  "components": {
+    "buttons": {
+      "primary": "bg-[#005FB8] text-white hover:bg-[#004A94] rounded-md px-4 py-2 font-medium transition-colors focus:ring-2 focus:ring-[#005FB8] focus:ring-offset-2",
+      "secondary": "bg-white text-slate-900 border border-slate-200 hover:bg-slate-50 rounded-md px-4 py-2 font-medium transition-colors",
+      "ghost": "text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-md px-4 py-2 font-medium transition-colors"
+    },
+    "cards": {
+      "base": "bg-white border border-slate-200 rounded-xl shadow-sm",
+      "interactive": "hover:shadow-md hover:border-slate-300 transition-all duration-200 cursor-pointer"
+    },
+    "inputs": {
+      "base": "w-full border border-slate-200 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#005FB8] focus:border-transparent transition-all",
+      "label": "block text-sm font-medium text-slate-700 mb-1"
+    },
+    "map_marker": {
+      "info_window": "bg-white rounded-lg shadow-xl border border-slate-200 p-4 min-w-[200px]"
+    }
+  },
+  "interactive_elements": {
+    "hover_states": "All interactive elements MUST have distinct hover states (darker backgrounds or elevated shadows).",
+    "focus_states": "Visible focus rings (using primary color) MUST be present on all focusable elements.",
+    "transitions": "Use 'transition-all duration-200 ease-in-out' for micro-interactions."
+  },
+  "icons": {
+    "library": "lucide-react",
+    "usage": "Use crisp, clean line icons. Size typically 16px to 20px (w-4 h-4 to w-5 h-5)."
+  },
+  "media": {
+    "image_urls": [
+      {
+        "category": "login_background",
+        "description": "Abstract minimalist grid texture for the login screen background to convey data and mapping.",
+        "url": "https://images.pexels.com/photos/33968585/pexels-photo-33968585.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940"
+      }
+    ]
+  },
+  "accessibility": {
+    "contrast": "Ensure minimum 4.5:1 contrast for standard text. Uses pure black and dark slates for readability.",
+    "data_testid": "ALL interactive elements MUST include data-testid attributes (e.g., data-testid='sheet-selector-dropdown', data-testid='map-marker-edit-btn')."
+  },
+  "specific_instructions_to_main_agent": [
+    "Use Shadcn UI for standard components (Dropdown, Select, Dialog, Sheet for the right edit panel).",
+    "The application should launch into a clean Login screen featuring Microsoft OAuth prominently.",
+    "Once authenticated, the main view is a full-screen Google Map. Overlaid on the map is a left-aligned floating control panel (for selecting the Excel file, sheet, and toggling column visibility).",
+    "Clicking a map marker opens a slide-out panel on the right (or a Shadcn Sheet) to edit the row's data. It uses progressive disclosure.",
+    "Maintain the F-Pattern: Brand/File selection top left, map content center, editing right.",
+    "Ensure the edit form binds dynamically to the columns (excluding the fixed lat/lng columns).",
+    "Use pure CSS/Tailwind for the map overlay layouts rather than standard generic grids, to achieve the 'Godly' dashboard aesthetic (crisp borders, subtle shadows, high utility)."
+  ]
+}
