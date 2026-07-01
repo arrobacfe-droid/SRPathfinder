@@ -216,22 +216,51 @@ async def auth_logout(x_session_id: str = Header(...)):
 @api_router.get("/onedrive/files")
 async def list_excel_files(x_session_id: str = Header(...)):
     s = await get_session(x_session_id)
-    # Search top-level .xlsx files
-    data = await graph_get(s, f"{GRAPH}/me/drive/root/search(q='.xlsx')")
-    files = data.get("value", [])
-    out = []
-    for f in files:
-        name = f.get("name", "")
-        if not name.lower().endswith(".xlsx"):
-            continue
-        out.append({
+    seen = {}
+
+    # 1) Root children (top-level files in OneDrive root)
+    try:
+        data = await graph_get(s, f"{GRAPH}/me/drive/root/children", params={"$top": "200"})
+        for f in data.get("value", []):
+            name = f.get("name", "")
+            if name.lower().endswith(".xlsx") and "file" in f:
+                seen[f["id"]] = f
+    except HTTPException as e:
+        logger.warning(f"root/children failed: {e.detail}")
+
+    # 2) Full-drive search (indexed, includes subfolders)
+    try:
+        data = await graph_get(s, f"{GRAPH}/me/drive/root/search(q='.xlsx')")
+        for f in data.get("value", []):
+            name = f.get("name", "")
+            if name.lower().endswith(".xlsx") and "file" in f:
+                seen[f["id"]] = f
+    except HTTPException as e:
+        logger.warning(f"search failed: {e.detail}")
+
+    # 3) Recent files (catches files opened recently, even shared)
+    try:
+        data = await graph_get(s, f"{GRAPH}/me/drive/recent", params={"$top": "50"})
+        for f in data.get("value", []):
+            name = f.get("name", "")
+            if name.lower().endswith(".xlsx") and "file" in f:
+                seen.setdefault(f["id"], f)
+    except HTTPException as e:
+        logger.warning(f"recent failed: {e.detail}")
+
+    files = [
+        {
             "id": f["id"],
-            "name": name,
+            "name": f.get("name", ""),
             "size": f.get("size"),
             "modified": f.get("lastModifiedDateTime"),
             "web_url": f.get("webUrl"),
-        })
-    return {"files": out}
+            "path": (f.get("parentReference") or {}).get("path"),
+        }
+        for f in seen.values()
+    ]
+    files.sort(key=lambda x: x.get("modified") or "", reverse=True)
+    return {"files": files, "count": len(files)}
 
 
 async def _load_workbook(session: dict, item_id: str) -> openpyxl.Workbook:
