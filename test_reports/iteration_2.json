@@ -1,0 +1,66 @@
+{
+  "summary": "Bug fix VERIFIED: MS_CLIENT_SECRET now accepted by Microsoft (Azure AD). Callback with a fake code + valid state returns AADSTS9002313 ('invalid_grant') instead of the previous AADSTS7000215 ('invalid_client' / 'Invalid client secret provided'). This proves Microsoft is authenticating our client credentials successfully and rejecting only the authorization code. All 14 regression tests from iteration_1 also pass.",
+  "tested_scope": ["backend"],
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "bug_fix_verification": {
+    "bug": "AADSTS7000215 Invalid client secret provided (Secret ID vs Value confusion)",
+    "endpoint": "POST /api/auth/microsoft/callback",
+    "status": "FIXED",
+    "evidence": {
+      "microsoft_response": {
+        "error": "invalid_grant",
+        "error_description": "AADSTS9002313: Invalid request. Request is malformed or invalid.",
+        "error_codes": [9002313]
+      },
+      "old_expected_error_absent": "AADSTS7000215 / invalid_client NOT present in response",
+      "new_expected_error_present": "invalid_grant + AADSTS9002313 present"
+    }
+  },
+  "passed": [
+    "TestMicrosoftClientSecretFix::test_callback_with_fake_code_but_valid_state_returns_invalid_grant_not_invalid_client (BUG FIX)",
+    "GET /api/ returns Excel Maps API",
+    "GET /api/auth/microsoft/url returns valid URL with state persisted in oauth_states",
+    "POST /api/auth/microsoft/callback missing code/state -> 400",
+    "POST /api/auth/microsoft/callback invalid state -> 400",
+    "GET /api/onedrive/files without session -> 401",
+    "GET /api/maps without session -> 401",
+    "GET /api/auth/me invalid session -> 401",
+    "POST /api/maps creates map (injected session)",
+    "GET /api/maps lists created map",
+    "GET /api/maps/{id} returns map",
+    "PATCH /api/maps/{id} updates name and visible_columns",
+    "PUT /api/maps/{id}/points/{row} sets overrides",
+    "DELETE /api/maps/{id}/points/{row} removes overrides",
+    "DELETE /api/maps/{id} deletes map"
+  ],
+  "failed": [],
+  "test_report_links": [
+    "/app/backend/tests/test_ms_oauth_callback.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Consider narrowing OAuth `scope` at token endpoint call — Microsoft docs recommend omitting `offline_access User.Read` on token exchange when scopes are already granted in the /authorize step; harmless but unusual.",
+    "oauth_states collection has no TTL index; abandoned states accumulate. Add a TTL index on `created_at` (e.g., 10 min) to auto-clean.",
+    "Sessions never expire and refresh_token failures don't invalidate the session doc; consider setting session TTL or clearing on refresh failure.",
+    "server.py is a single 460-line file; when adding features consider splitting auth / onedrive / maps into modules."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_ms_oauth_callback.py (new comprehensive pytest file)",
+    "/app/test_reports/pytest/pytest_results.xml (generated)"
+  ],
+  "success_rate": {"backend": "100% (15/15)", "frontend": "not tested (skipped per request)"},
+  "seed_data_creation": "Tests inject a temporary TEST_ prefixed session + map in MongoDB and clean them up in teardown_class. oauth_states are auto-cleaned by the callback endpoint or explicitly deleted in tests.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "MS OAuth client secret bug (AADSTS7000215) is verified as FIXED. Real OAuth code exchange still requires a browser-driven flow which cannot be tested backend-only. Graph-calling endpoints (/onedrive/files, /onedrive/files/{id}/sheets, /maps/{id}/data) require a real MS access token so they remain untested. Use /app/backend/tests/test_ms_oauth_callback.py as the regression baseline.",
+  "rca_of_the_issue": "Root cause: MS_CLIENT_SECRET in backend/.env contained the Azure AD 'Secret ID' (a GUID) instead of the actual secret 'Value'. Azure returned AADSTS7000215 on token exchange. Fix: replaced with the actual client-secret value 'tVM8Q~~emDBjMM-585d.dAvXGmnTUINqdUmXKb~U'. Verification: sending a fake authorization code but a valid registered state now yields invalid_grant/AADSTS9002313 from Microsoft instead of invalid_client, confirming client credentials are accepted."
+}
