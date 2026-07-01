@@ -1,0 +1,30 @@
+{
+  "summary": "Backend-only smoke + CRUD test for Excel Maps API. All 18 targeted checks passed including root, MS OAuth URL construction & state persistence, callback error paths (400 for missing/invalid state), auth guards (401 for missing/invalid session on protected routes), full Maps CRUD via injected fake session, point override put/delete, and logout invalidation.",
+  "tested_scope": ["backend"],
+  "passed": [
+    "GET /api/ returns {message: 'Excel Maps API'}",
+    "GET /api/auth/microsoft/url builds correct authorize URL with client_id, redirect_uri, response_type=code, scope, and state UUID",
+    "oauth_states document is persisted for issued state",
+    "POST /api/auth/microsoft/callback with missing code/state -> 400",
+    "POST /api/auth/microsoft/callback with invalid state -> 400",
+    "GET /api/onedrive/files without session -> 401",
+    "GET /api/maps without session -> 401",
+    "GET /api/auth/me with invalid session -> 401",
+    "GET /api/auth/me with injected valid session returns user info",
+    "POST /api/maps creates map (200)",
+    "GET /api/maps lists newly created map",
+    "GET /api/maps/{id} returns map",
+    "PATCH /api/maps/{id} updates name and visible_columns",
+    "PUT /api/maps/{id}/points/{row} sets overrides correctly",
+    "DELETE /api/maps/{id}/points/{row} unsets overrides",
+    "DELETE /api/maps/{id} deletes map (200)",
+    "POST /api/auth/logout deletes session",
+    "GET /api/auth/me after logout -> 401"
+  ],
+  "failed": [],
+  "action_items": [],
+  "success_rate": {"backend": "100% (18/18)", "frontend": "not tested (skipped per request)"},
+  "retest_needed": false,
+  "notes": "Graph-calling endpoints (/onedrive/files with valid session, sheets, /maps/{id}/data) were intentionally skipped as they require a real Microsoft OAuth token. All in-scope MongoDB-backed flows verified. Test data (fake session and map) cleaned up at end of run.",
+  "full_testing_deferred": true
+}

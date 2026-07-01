@@ -1,0 +1,23 @@
+{
+  "passed": [
+    "GET /api/ root",
+    "GET /api/auth/microsoft/url",
+    "oauth_states persistence",
+    "callback missing code/state -> 400",
+    "callback invalid state -> 400",
+    "GET /onedrive/files w/o session -> 401",
+    "GET /maps w/o session -> 401",
+    "GET /auth/me invalid -> 401",
+    "GET /auth/me valid session",
+    "POST /maps",
+    "GET /maps list",
+    "GET /maps/{id}",
+    "PATCH /maps/{id}",
+    "PUT /maps/{id}/points/{row}",
+    "DELETE /maps/{id}/points/{row}",
+    "DELETE /maps/{id}",
+    "POST /auth/logout",
+    "GET /auth/me after logout -> 401"
+  ],
+  "failed": []
+}
