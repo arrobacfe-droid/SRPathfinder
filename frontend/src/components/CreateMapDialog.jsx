@@ -19,7 +19,7 @@ import {
 } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { FileSpreadsheet, Loader2, ChevronRight } from "lucide-react";
+import { FileSpreadsheet, Loader2, ChevronRight, MapPin, Info } from "lucide-react";
 import api from "@/lib/api";
 import { toast } from "sonner";
 
@@ -32,6 +32,7 @@ export default function CreateMapDialog({ open, onOpenChange, onCreated }) {
   const [selectedSheet, setSelectedSheet] = useState("");
   const [sheetLoading, setSheetLoading] = useState(false);
   const [headers, setHeaders] = useState([]);
+  const [sampleRows, setSampleRows] = useState([]);
   const [latCol, setLatCol] = useState("");
   const [lngCol, setLngCol] = useState("");
   const [visibleCols, setVisibleCols] = useState([]);
@@ -40,14 +41,16 @@ export default function CreateMapDialog({ open, onOpenChange, onCreated }) {
 
   useEffect(() => {
     if (!open) {
-      // reset
       setTimeout(() => {
         setStep(1);
         setSelectedFile(null);
         setSheets([]);
         setSelectedSheet("");
         setHeaders([]);
+        setSampleRows([]);
         setVisibleCols([]);
+        setLatCol("");
+        setLngCol("");
         setName("");
       }, 200);
       return;
@@ -87,11 +90,13 @@ export default function CreateMapDialog({ open, onOpenChange, onCreated }) {
     try {
       const res = await api.get(`/onedrive/files/${selectedFile.id}/sheets/${encodeURIComponent(sheetName)}/data`);
       setHeaders(res.data.headers);
-      setLatCol(res.data.lat_column);
-      setLngCol(res.data.lng_column);
-      // Default visible columns: all except lat/lng
-      const display = res.data.headers.filter((h) => h !== res.data.lat_column && h !== res.data.lng_column);
-      setVisibleCols(display.slice(0, Math.min(4, display.length)));
+      setSampleRows(res.data.sample_rows || []);
+      setLatCol(res.data.suggested_lat_column || "");
+      setLngCol(res.data.suggested_lng_column || "");
+      const auto = res.data.headers.filter(
+        (h) => h !== res.data.suggested_lat_column && h !== res.data.suggested_lng_column
+      );
+      setVisibleCols(auto.slice(0, Math.min(4, auto.length)));
       setName(`${selectedFile.name.replace(/\.xlsx$/i, "")} · ${sheetName}`);
       setStep(3);
     } catch (e) {
@@ -106,6 +111,14 @@ export default function CreateMapDialog({ open, onOpenChange, onCreated }) {
   };
 
   const handleCreate = async () => {
+    if (!latCol || !lngCol) {
+      toast.error("Selecciona las columnas de latitud y longitud");
+      return;
+    }
+    if (latCol === lngCol) {
+      toast.error("Latitud y longitud deben ser columnas distintas");
+      return;
+    }
     setSaving(true);
     try {
       const res = await api.post("/maps", {
@@ -113,12 +126,14 @@ export default function CreateMapDialog({ open, onOpenChange, onCreated }) {
         file_id: selectedFile.id,
         file_name: selectedFile.name,
         sheet_name: selectedSheet,
+        lat_column: latCol,
+        lng_column: lngCol,
         visible_columns: visibleCols,
       });
       toast.success("Mapa creado");
       onCreated(res.data);
     } catch (e) {
-      toast.error("Error al crear mapa");
+      toast.error(e.response?.data?.detail || "Error al crear mapa");
     } finally {
       setSaving(false);
     }
@@ -132,7 +147,7 @@ export default function CreateMapDialog({ open, onOpenChange, onCreated }) {
         <DialogHeader className="p-6 pb-3">
           <DialogTitle className="font-heading text-xl">Nuevo mapa desde Excel</DialogTitle>
           <DialogDescription className="text-xs">
-            Paso {step} de 3 · {step === 1 ? "Elige un archivo .xlsx" : step === 2 ? "Selecciona una hoja" : "Configura las columnas visibles"}
+            Paso {step} de 3 · {step === 1 ? "Elige un archivo .xlsx" : step === 2 ? "Selecciona una hoja" : "Configura columnas"}
           </DialogDescription>
 
           <div className="flex items-center gap-1 pt-3">
@@ -166,7 +181,7 @@ export default function CreateMapDialog({ open, onOpenChange, onCreated }) {
                       <div className="min-w-0 flex-1">
                         <p className="text-sm font-medium truncate">{f.name}</p>
                         <p className="text-xs text-slate-500">
-                          {f.size ? `${(f.size / 1024).toFixed(1)} KB` : ""}{" "}· {new Date(f.modified).toLocaleDateString()}
+                          {f.size ? `${(f.size / 1024).toFixed(1)} KB` : ""}{" "}· {f.modified ? new Date(f.modified).toLocaleDateString() : ""}
                         </p>
                       </div>
                       <ChevronRight className="w-4 h-4 text-slate-400" />
@@ -208,56 +223,92 @@ export default function CreateMapDialog({ open, onOpenChange, onCreated }) {
             </div>
           )}
 
-          {/* Step 3: columns */}
+          {/* Step 3: columns config */}
           {step === 3 && (
-            <div className="space-y-4 py-2 overflow-auto flex-1">
-              <div>
-                <Label className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1.5">Nombre del mapa</Label>
-                <Input value={name} onChange={(e) => setName(e.target.value)} data-testid="map-name-input" />
-              </div>
+            <ScrollArea className="flex-1 thin-scroll">
+              <div className="space-y-4 py-2 pr-2">
+                <div>
+                  <Label className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1.5">Nombre del mapa</Label>
+                  <Input value={name} onChange={(e) => setName(e.target.value)} data-testid="map-name-input" />
+                </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div className="bg-slate-50 border border-slate-200 rounded-md p-3">
-                  <p className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold mb-1">Latitud</p>
-                  <p className="text-sm font-mono">{latCol}</p>
-                </div>
-                <div className="bg-slate-50 border border-slate-200 rounded-md p-3">
-                  <p className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold mb-1">Longitud</p>
-                  <p className="text-sm font-mono">{lngCol}</p>
-                </div>
-              </div>
-
-              <div>
-                <div className="flex items-center justify-between mb-2">
-                  <Label className="text-xs font-semibold uppercase tracking-wider text-slate-500">Columnas a mostrar en el mapa</Label>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-6 text-xs"
-                    onClick={() => setVisibleCols(displayCols)}
-                  >
-                    Seleccionar todo
-                  </Button>
-                </div>
-                <ScrollArea className="max-h-[200px] thin-scroll border border-slate-200 rounded-md">
-                  <div className="p-2 space-y-1">
-                    {displayCols.map((c) => (
-                      <label
-                        key={c}
-                        className="flex items-center gap-2 px-2 py-1.5 rounded-md hover:bg-slate-50 cursor-pointer"
-                      >
-                        <Checkbox
-                          checked={visibleCols.includes(c)}
-                          onCheckedChange={() => toggleCol(c)}
-                          data-testid={`create-col-${c}`}
-                        />
-                        <span className="text-sm">{c}</span>
-                      </label>
-                    ))}
+                <div className="border border-slate-200 rounded-lg p-4 bg-slate-50/50 space-y-3">
+                  <div className="flex items-center gap-2">
+                    <MapPin className="w-4 h-4 text-[#005FB8]" />
+                    <Label className="text-xs font-semibold uppercase tracking-wider text-slate-700">Columnas de coordenadas</Label>
                   </div>
-                </ScrollArea>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <Label className="text-[10px] uppercase tracking-wider text-slate-500 mb-1 block">Latitud</Label>
+                      <Select value={latCol} onValueChange={setLatCol}>
+                        <SelectTrigger data-testid="lat-column-select"><SelectValue placeholder="Elige columna" /></SelectTrigger>
+                        <SelectContent>
+                          {headers.map((h) => (
+                            <SelectItem key={h} value={h} disabled={h === lngCol}>{h}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div>
+                      <Label className="text-[10px] uppercase tracking-wider text-slate-500 mb-1 block">Longitud</Label>
+                      <Select value={lngCol} onValueChange={setLngCol}>
+                        <SelectTrigger data-testid="lng-column-select"><SelectValue placeholder="Elige columna" /></SelectTrigger>
+                        <SelectContent>
+                          {headers.map((h) => (
+                            <SelectItem key={h} value={h} disabled={h === latCol}>{h}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+
+                  {/* Preview sample */}
+                  {sampleRows.length > 0 && latCol && lngCol && (
+                    <div className="bg-white border border-slate-200 rounded-md p-2 text-xs">
+                      <p className="text-[10px] uppercase tracking-wider text-slate-500 mb-1 font-semibold flex items-center gap-1">
+                        <Info className="w-3 h-3" /> Muestra de la fila 1
+                      </p>
+                      <div className="flex gap-4 font-mono">
+                        <span>lat: <span className="text-[#005FB8] font-semibold">{String(sampleRows[0][latCol] ?? "—")}</span></span>
+                        <span>lng: <span className="text-[#005FB8] font-semibold">{String(sampleRows[0][lngCol] ?? "—")}</span></span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <Label className="text-xs font-semibold uppercase tracking-wider text-slate-500">Columnas visibles en el marcador</Label>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-6 text-xs"
+                      onClick={() => setVisibleCols(displayCols)}
+                    >
+                      Todas
+                    </Button>
+                  </div>
+                  <div className="max-h-[180px] overflow-auto thin-scroll border border-slate-200 rounded-md">
+                    <div className="p-2 space-y-1">
+                      {displayCols.map((c) => (
+                        <label
+                          key={c}
+                          className="flex items-center gap-2 px-2 py-1.5 rounded-md hover:bg-slate-50 cursor-pointer"
+                        >
+                          <Checkbox
+                            checked={visibleCols.includes(c)}
+                            onCheckedChange={() => toggleCol(c)}
+                            data-testid={`create-col-${c}`}
+                          />
+                          <span className="text-sm">{c}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                </div>
               </div>
-            </div>
+            </ScrollArea>
           )}
         </div>
 
@@ -276,7 +327,7 @@ export default function CreateMapDialog({ open, onOpenChange, onCreated }) {
             {step === 3 && (
               <Button
                 onClick={handleCreate}
-                disabled={saving || !name.trim()}
+                disabled={saving || !name.trim() || !latCol || !lngCol}
                 size="sm"
                 className="bg-[#005FB8] hover:bg-[#004A94]"
                 data-testid="confirm-create-map-btn"

@@ -103,12 +103,16 @@ class MapCreate(BaseModel):
     file_id: str
     file_name: str
     sheet_name: str
+    lat_column: str
+    lng_column: str
     visible_columns: List[str] = []
 
 
 class MapUpdate(BaseModel):
     name: Optional[str] = None
     visible_columns: Optional[List[str]] = None
+    lat_column: Optional[str] = None
+    lng_column: Optional[str] = None
 
 
 class PointEdit(BaseModel):
@@ -287,40 +291,38 @@ async def sheet_data(item_id: str, sheet_name: str, x_session_id: str = Header(.
     try:
         headers_row = next(rows_iter)
     except StopIteration:
-        return {"headers": [], "rows": []}
+        return {"headers": [], "rows": [], "sample_rows": []}
 
     headers = [str(h) if h is not None else f"col_{i}" for i, h in enumerate(headers_row)]
-    if len(headers) < 2:
-        raise HTTPException(status_code=400, detail="Sheet needs at least 2 columns (lat, lng)")
+    if not headers:
+        raise HTTPException(status_code=400, detail="Sheet has no columns")
 
-    rows = []
+    sample_rows = []
+    all_rows = []
     for idx, row in enumerate(rows_iter):
-        # Pad row
         vals = list(row) + [None] * (len(headers) - len(row))
         vals = vals[:len(headers)]
-        # Last two are lat/lng
-        try:
-            lat = float(vals[-2]) if vals[-2] is not None and str(vals[-2]).strip() != "" else None
-            lng = float(vals[-1]) if vals[-1] is not None and str(vals[-1]).strip() != "" else None
-        except (ValueError, TypeError):
-            lat, lng = None, None
-
         data_dict = {}
         for h, v in zip(headers, vals):
             if isinstance(v, datetime):
                 v = v.isoformat()
             data_dict[h] = v
-        rows.append({
-            "row_index": idx,
-            "lat": lat,
-            "lng": lng,
-            "data": data_dict,
-        })
+        all_rows.append({"row_index": idx, "data": data_dict})
+        if len(sample_rows) < 3:
+            sample_rows.append(data_dict)
+
+    # Auto-detect lat/lng candidates by header name
+    lat_candidates = [h for h in headers if any(k in h.lower() for k in ["lat", "latitud"])]
+    lng_candidates = [h for h in headers if any(k in h.lower() for k in ["lon", "lng", "longitud"])]
+    suggested_lat = lat_candidates[0] if lat_candidates else (headers[-2] if len(headers) >= 2 else None)
+    suggested_lng = lng_candidates[0] if lng_candidates else (headers[-1] if len(headers) >= 1 else None)
+
     return {
         "headers": headers,
-        "lat_column": headers[-2],
-        "lng_column": headers[-1],
-        "rows": rows,
+        "sample_rows": sample_rows,
+        "suggested_lat_column": suggested_lat,
+        "suggested_lng_column": suggested_lng,
+        "row_count": len(all_rows),
     }
 
 
@@ -337,8 +339,10 @@ async def create_map(payload: MapCreate, x_session_id: str = Header(...)):
         "file_id": payload.file_id,
         "file_name": payload.file_name,
         "sheet_name": payload.sheet_name,
+        "lat_column": payload.lat_column,
+        "lng_column": payload.lng_column,
         "visible_columns": payload.visible_columns,
-        "point_overrides": {},  # row_index (str) -> {col: value}
+        "point_overrides": {},
         "created_at": now_iso(),
         "updated_at": now_iso(),
     }
@@ -430,25 +434,43 @@ async def map_data(map_id: str, x_session_id: str = Header(...)):
     except StopIteration:
         return {"map": m, "headers": [], "rows": []}
     headers = [str(h) if h is not None else f"col_{i}" for i, h in enumerate(headers_row)]
+    lat_col = m.get("lat_column")
+    lng_col = m.get("lng_column")
+    # Backwards-compat: if missing, default to last-two columns
+    if not lat_col and len(headers) >= 2:
+        lat_col = headers[-2]
+    if not lng_col and len(headers) >= 1:
+        lng_col = headers[-1]
+    if lat_col not in headers or lng_col not in headers:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Columnas de coordenadas ({lat_col}, {lng_col}) no encontradas en la hoja. Disponibles: {headers}",
+        )
+    lat_idx = headers.index(lat_col)
+    lng_idx = headers.index(lng_col)
     overrides = m.get("point_overrides", {}) or {}
     rows = []
     for idx, row in enumerate(rows_iter):
         vals = list(row) + [None] * (len(headers) - len(row))
         vals = vals[:len(headers)]
         try:
-            lat = float(vals[-2]) if vals[-2] is not None and str(vals[-2]).strip() != "" else None
-            lng = float(vals[-1]) if vals[-1] is not None and str(vals[-1]).strip() != "" else None
+            lat_raw = vals[lat_idx]
+            lat = float(lat_raw) if lat_raw is not None and str(lat_raw).strip() != "" else None
         except (ValueError, TypeError):
-            lat, lng = None, None
+            lat = None
+        try:
+            lng_raw = vals[lng_idx]
+            lng = float(lng_raw) if lng_raw is not None and str(lng_raw).strip() != "" else None
+        except (ValueError, TypeError):
+            lng = None
         data_dict = {}
         for h, v in zip(headers, vals):
             if isinstance(v, datetime):
                 v = v.isoformat()
             data_dict[h] = v
-        # Apply overrides (excluding lat/lng changes — location not editable)
         ov = overrides.get(str(idx)) or {}
         for k, v in ov.items():
-            if k in (headers[-2], headers[-1]):
+            if k in (lat_col, lng_col):
                 continue
             data_dict[k] = v
         rows.append({
@@ -461,8 +483,8 @@ async def map_data(map_id: str, x_session_id: str = Header(...)):
     return {
         "map": m,
         "headers": headers,
-        "lat_column": headers[-2],
-        "lng_column": headers[-1],
+        "lat_column": lat_col,
+        "lng_column": lng_col,
         "rows": rows,
     }
 

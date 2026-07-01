@@ -1,0 +1,56 @@
+{
+  "summary": "Iteration 3: verified new lat_column/lng_column configuration feature on POST/GET/PATCH /api/maps + backwards compatibility with legacy maps. All 28 tests pass (13 new feature/regression + 15 iteration_2 baseline).",
+  "tested_scope": ["backend"],
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "feature_verification": {
+    "feature": "Configurable lat/lng columns per map",
+    "endpoints_covered": [
+      "POST /api/maps (now requires lat_column & lng_column)",
+      "GET /api/maps (returns new fields)",
+      "GET /api/maps/{id} (returns new fields; works for legacy maps without them)",
+      "PATCH /api/maps/{id} (accepts partial lat_column/lng_column updates)",
+      "DELETE /api/maps/{id}"
+    ],
+    "not_end_to_end_testable": [
+      "GET /api/onedrive/files/{item_id}/sheets/{sheet_name}/data (needs real MS token) - inspected code: returns suggested_lat/lng + sample_rows/headers as expected",
+      "GET /api/maps/{id}/data (needs real MS token) - inspected code: uses m.get('lat_column')/m.get('lng_column') with fallback to last-two headers"
+    ]
+  },
+  "passed": [
+    "POST /api/maps missing lat_column & lng_column -> 422 (Pydantic)",
+    "POST /api/maps missing only lng_column -> 422",
+    "POST /api/maps with lat_column/lng_column persists them (verified via Mongo, GET list, GET by id)",
+    "PATCH /api/maps/{id} updates lat_column & lng_column",
+    "PATCH /api/maps/{id} with only lat_column preserves lng_column (partial update via exclude_none)",
+    "Backwards-compat: legacy map (inserted directly in Mongo without lat/lng) is listable via GET /api/maps and GET /api/maps/{id} without error",
+    "DELETE /api/maps/{id} works for new maps and legacy",
+    "Regression (iteration_2 baseline, all 15): root, ms_url, callback missing/invalid state, protected 401s, maps CRUD, point overrides, MS_CLIENT_SECRET fix"
+  ],
+  "failed": [],
+  "test_report_links": [
+    "/app/backend/tests/test_map_columns_config.py",
+    "/app/backend/tests/test_ms_oauth_callback.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py map_data (line ~444) raises 400 when lat_col/lng_col not in headers — good, but the error message leaks the entire headers array; consider capping or i18n-ing for production.",
+    "sheet_data auto-detect (line ~314) uses substring match 'lat' which will also match unrelated columns like 'plate' or 'flat'. Consider using startswith/regex word-boundary or an exact-name allowlist.",
+    "MapUpdate lat_column/lng_column are `Optional[str]` — passing an empty string '' would be persisted and later break map_data because '' won't be in headers. Consider validating min_length=1 or trimming.",
+    "oauth_states still has no TTL index (open from iteration_2). After this run 7 states accumulated from unrelated /auth/microsoft/url calls; not cleaned.",
+    "PATCH /maps uses model_dump(exclude_none=True) — a user cannot clear lat_column/lng_column by sending null; would need explicit sentinel or separate endpoint if that's desired.",
+    "server.py is now ~510 lines — still single-file; consider splitting into routers when adding more features."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_map_columns_config.py (new, 13 tests)",
+    "/app/backend/tests/test_ms_oauth_callback.py (updated test_create_map payload to include lat_column/lng_column so regression stays green)"
+  ],
+  "success_rate": {"backend": "100% (28/28)", "frontend": "not tested (skipped per request)"},
+  "test_credentials": "None used. Sessions are injected directly into MongoDB with TEST_ prefix and cleaned in fixture teardown.",
+  "seed_data_creation": "Module-scoped fixture inserts one TEST_ session + user; maps created during tests all belong to that TEST_ user and are wiped in teardown. Legacy map (backwards-compat test) inserted directly in mongo, cleaned via user_id wipe. Verified: 0 TEST_ sessions/maps remain after run.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "New feature (configurable lat/lng columns) verified. Two Graph-calling endpoints (/onedrive/files/{id}/sheets/{sheet}/data returning suggested_lat/lng + sample_rows, and /maps/{id}/data with the lat/lng-column-driven point extraction + fallback) still cannot be tested backend-only — they require a real MS access token from a browser OAuth flow. Consider mocking httpx if end-to-end coverage of those is desired. Regression baseline is now /app/backend/tests/ (both files, 28 tests total, ~6s runtime).",
+  "rca_of_the_issue": "N/A — feature verification run, no bug encountered. The existing iteration_2 test_create_map was mechanically broken by the newly required fields and was updated in-place."
+}

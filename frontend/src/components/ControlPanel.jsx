@@ -2,10 +2,17 @@ import { useMemo, useState } from "react";
 import { Card } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Layers, ChevronLeft, ChevronRight, Eye, FileSpreadsheet, MapPin } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
-export default function ControlPanel({ mapData, loading, onUpdateColumns }) {
+export default function ControlPanel({ mapData, loading, onUpdateColumns, onUpdateCoords }) {
   const [collapsed, setCollapsed] = useState(false);
 
   const headers = mapData?.headers || [];
@@ -13,7 +20,6 @@ export default function ControlPanel({ mapData, loading, onUpdateColumns }) {
   const lngCol = mapData?.lng_column;
   const visible = useMemo(() => new Set(mapData?.map?.visible_columns || []), [mapData]);
 
-  // Display columns = headers excluding lat/lng
   const displayHeaders = headers.filter((h) => h !== latCol && h !== lngCol);
   const totalPoints = mapData?.rows?.length || 0;
   const validPoints = mapData?.rows?.filter((r) => typeof r.lat === "number" && typeof r.lng === "number").length || 0;
@@ -87,9 +93,33 @@ export default function ControlPanel({ mapData, loading, onUpdateColumns }) {
               <MapPin className="w-3.5 h-3.5 text-slate-400" />
               <p className="text-xs uppercase tracking-wider text-slate-500 font-semibold">Columnas geo</p>
             </div>
-            <div className="flex gap-2">
-              <span className="text-xs bg-slate-100 rounded px-2 py-1 font-mono">{latCol}</span>
-              <span className="text-xs bg-slate-100 rounded px-2 py-1 font-mono">{lngCol}</span>
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <p className="text-[10px] uppercase tracking-wider text-slate-400 mb-0.5">Latitud</p>
+                <Select value={latCol || ""} onValueChange={(v) => onUpdateCoords({ lat_column: v })}>
+                  <SelectTrigger className="h-8 text-xs" data-testid="lat-col-panel-select">
+                    <SelectValue placeholder="—" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {headers.map((h) => (
+                      <SelectItem key={h} value={h} disabled={h === lngCol}>{h}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <p className="text-[10px] uppercase tracking-wider text-slate-400 mb-0.5">Longitud</p>
+                <Select value={lngCol || ""} onValueChange={(v) => onUpdateCoords({ lng_column: v })}>
+                  <SelectTrigger className="h-8 text-xs" data-testid="lng-col-panel-select">
+                    <SelectValue placeholder="—" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {headers.map((h) => (
+                      <SelectItem key={h} value={h} disabled={h === latCol}>{h}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
           </div>
 

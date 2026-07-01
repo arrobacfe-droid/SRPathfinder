@@ -201,6 +201,8 @@ class TestMapsCRUDWithInjectedSession:
             "file_id": "fake_file_id",
             "file_name": "TEST.xlsx",
             "sheet_name": "Sheet1",
+            "lat_column": "Lat",
+            "lng_column": "Lng",
             "visible_columns": ["a", "b"],
         }
         r = requests.post(f"{API}/maps", json=payload, headers=self._h(), timeout=15)

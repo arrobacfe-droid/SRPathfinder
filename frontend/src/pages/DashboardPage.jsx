@@ -129,6 +129,16 @@ export default function DashboardPage() {
     }
   };
 
+  const handleUpdateCoords = async (partial) => {
+    try {
+      await api.patch(`/maps/${activeMapId}`, partial);
+      toast.success("Columnas de coordenadas actualizadas");
+      await loadMapData(activeMapId);
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "No se pudo actualizar");
+    }
+  };
+
   const activeMap = maps.find((m) => m.id === activeMapId);
 
   return (
@@ -239,6 +249,7 @@ export default function DashboardPage() {
               mapData={mapData}
               loading={loadingMap}
               onUpdateColumns={handleUpdateColumns}
+              onUpdateCoords={handleUpdateCoords}
             />
             <EditPointSheet
               point={selectedPoint}
