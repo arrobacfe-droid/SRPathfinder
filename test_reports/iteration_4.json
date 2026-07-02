@@ -1,0 +1,66 @@
+{
+  "summary": "Iteration 4: verified share (public link) endpoints + status/range configuration on maps. All 43 backend tests pass (15 new + 28 iteration_3 regression).",
+  "tested_scope": ["backend"],
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "feature_verification": {
+    "feature": "Share + status column + row/column range",
+    "endpoints_covered": [
+      "POST /api/maps (new optional: header_row, first_col, status_column, status_visible_values; defaults + persistence)",
+      "PATCH /api/maps/{id} (updates new fields)",
+      "POST /api/maps/{id}/share (32-hex token, is_public=True, reuse on re-enable)",
+      "POST /api/maps/{id}/share/rotate (new token != previous)",
+      "DELETE /api/maps/{id}/share (is_public=False, token preserved)",
+      "GET /api/public/maps/{token} (no auth, hides user_id/file_id/point_overrides; 404 for invalid or disabled)"
+    ],
+    "not_end_to_end_testable": [
+      "GET /api/maps/{id}/data (needs real MS Graph token) — code inspected: _parse_sheet honors header_row/first_col; _build_map_rows honors status_column/status_visible_values setting rows[i].visible; map_data writes cached_rows/cached_headers/cached_at (used by public endpoint).",
+      "GET /api/onedrive/files/{item_id}/sheets/{sheet_name}/data with header_row/first_col query params (needs MS token)."
+    ]
+  },
+  "passed": [
+    "Create map: defaults header_row=1, first_col=1, status_column=None, status_visible_values=[]",
+    "Create map: is_public=False, share_token=None, cached_rows=[], cached_at=None, cached_headers=[]",
+    "Create map with all new fields persists (verified via Mongo + GET)",
+    "PATCH updates header_row/first_col/status_column/status_visible_values",
+    "POST /share generates 32-hex share_token and sets is_public=True; returns {share_token,is_public,map}",
+    "POST /share/rotate generates NEW token != previous; is_public stays True",
+    "DELETE /share sets is_public=False and PRESERVES share_token",
+    "Re-enabling share after disable reuses the existing token (not rotated)",
+    "Share endpoints (POST/DELETE/rotate) return 401 without x-session-id",
+    "User B cannot share/rotate/disable User A's map -> 404 (get_session filters by user_id)",
+    "GET /api/public/maps/{token} returns cached headers/rows/lat_col/lng_col/status_col + map metadata; no auth needed",
+    "Public response excludes user_id, file_id, point_overrides, access_token, refresh_token",
+    "GET /api/public/maps/{invalid} -> 404 with 'no encontrado o no compartido' detail",
+    "GET /api/public/maps/{token} after DELETE /share -> 404 even though token exists",
+    "Full regression: 28/28 iteration_3 tests still pass"
+  ],
+  "failed": [],
+  "test_report_links": [
+    "/app/backend/tests/test_share_and_status.py",
+    "/app/backend/tests/test_map_columns_config.py",
+    "/app/backend/tests/test_ms_oauth_callback.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py (~586): enable_share reuses existing token on subsequent calls — this is the tested/expected behavior, but is subtle. Consider documenting: users must call /share/rotate to invalidate a leaked token.",
+    "public_map (line ~624) projects out {user_id, file_id, point_overrides}, and then re-shapes into a fresh dict — good defense-in-depth. status_column is returned both at top-level AND inside map — mild duplication but harmless.",
+    "MapUpdate.header_row/first_col are `Optional[int]` with no validation — sending 0 or negative would be accepted and persisted. _parse_sheet clamps with max(1, ...) so it won't crash, but consider Pydantic Field(ge=1) for cleaner API contract.",
+    "MapUpdate.status_column: sending empty string '' would persist and then in _build_map_rows the condition `if status_col and status_col in headers` would be falsy, so status filtering is silently disabled. Consider trimming/None-ifying.",
+    "cached_rows can grow large (embedded in map doc). If Excel has thousands of rows, doc size may approach Mongo's 16MB limit. Consider a separate collection or trimming/paging.",
+    "share_token uses uuid4().hex (128 bits) — cryptographically fine. Consider using secrets.token_hex(16) for explicit intent (equivalent entropy).",
+    "server.py is now ~670 lines. Splitting into routers (auth / maps / share / onedrive) recommended before adding more features.",
+    "No rate-limiting on GET /api/public/maps/{token} — a leaked/guessed token has no throttling. Consider adding basic per-IP rate limit for the public endpoint."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_share_and_status.py (new, 15 tests across 4 classes)"
+  ],
+  "success_rate": {"backend": "100% (43/43)", "frontend": "not tested (skipped per request)"},
+  "test_credentials": "None used. Two TEST_ sessions/users (A + B) injected directly into MongoDB; all maps carry TEST_ user_id prefix.",
+  "seed_data_creation": "Module-scoped fixtures create session_a and session_b (both TEST_ prefixed). All maps created belong to these test users. Fixtures teardown deletes sessions + maps by user_id. Post-run verification: 0 TEST_ sessions / 0 TEST_ maps remain.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Baseline is now 43 tests in /app/backend/tests/ (test_ms_oauth_callback.py + test_map_columns_config.py + test_share_and_status.py, ~10s runtime with -n auto). Endpoints still not e2e-testable without a real MS Graph token: /onedrive/*, /maps/{id}/data — the latter is what populates cached_rows for the public endpoint, so its integration is unverified end-to-end (tests inject cached_rows directly into Mongo). If mocking httpx is added later, add coverage for _build_map_rows visibility flag driven by status_visible_values and _parse_sheet header_row/first_col slicing.",
+  "rca_of_the_issue": "N/A — feature verification, no bugs encountered."
+}

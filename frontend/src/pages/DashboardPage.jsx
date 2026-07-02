@@ -10,20 +10,22 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Map as MapIcon, LogOut, ChevronDown, Plus } from "lucide-react";
+import { Map as MapIcon, LogOut, ChevronDown, Plus, Share2 } from "lucide-react";
 import ControlPanel from "@/components/ControlPanel";
 import MapView from "@/components/MapView";
 import EditPointSheet from "@/components/EditPointSheet";
 import CreateMapDialog from "@/components/CreateMapDialog";
+import ShareDialog from "@/components/ShareDialog";
 
 export default function DashboardPage() {
   const [user, setUser] = useState(null);
   const [maps, setMaps] = useState([]);
   const [activeMapId, setActiveMapId] = useState(null);
-  const [mapData, setMapData] = useState(null); // {map, headers, rows, lat_column, lng_column}
+  const [mapData, setMapData] = useState(null);
   const [loadingMap, setLoadingMap] = useState(false);
   const [selectedPoint, setSelectedPoint] = useState(null);
   const [createOpen, setCreateOpen] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
 
   useEffect(() => {
     const u = localStorage.getItem("user");
@@ -66,11 +68,7 @@ export default function DashboardPage() {
   }, [activeMapId, loadMapData]);
 
   const handleLogout = async () => {
-    try {
-      await api.post("/auth/logout");
-    } catch (e) {
-      // ignore logout errors
-    }
+    try { await api.post("/auth/logout"); } catch (e) { /* ignore */ }
     localStorage.removeItem("session_id");
     localStorage.removeItem("user");
     window.location.href = "/login";
@@ -139,11 +137,35 @@ export default function DashboardPage() {
     }
   };
 
+  const handleUpdateStatus = async (partial) => {
+    try {
+      const res = await api.patch(`/maps/${activeMapId}`, partial);
+      setMaps((prev) => prev.map((m) => m.id === res.data.id ? res.data : m));
+      await loadMapData(activeMapId);
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "No se pudo actualizar");
+    }
+  };
+
+  const handleUpdateRange = async (partial) => {
+    try {
+      await api.patch(`/maps/${activeMapId}`, partial);
+      toast.success("Rango actualizado");
+      await loadMapData(activeMapId);
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "No se pudo actualizar");
+    }
+  };
+
+  const handleShareUpdate = (updatedMap) => {
+    setMaps((prev) => prev.map((m) => m.id === updatedMap.id ? updatedMap : m));
+    setMapData((prev) => prev ? { ...prev, map: updatedMap } : prev);
+  };
+
   const activeMap = maps.find((m) => m.id === activeMapId);
 
   return (
     <div className="h-screen w-full flex flex-col overflow-hidden bg-slate-50" data-testid="dashboard-page">
-      {/* Top bar */}
       <header className="h-14 border-b border-slate-200 bg-white flex items-center justify-between px-4 lg:px-6 shrink-0 z-30">
         <div className="flex items-center gap-3">
           <div className="w-8 h-8 bg-[#005FB8] rounded-md flex items-center justify-center">
@@ -151,13 +173,16 @@ export default function DashboardPage() {
           </div>
           <span className="font-heading font-bold tracking-tight">CartoSheet</span>
           <span className="text-xs text-slate-400 font-mono ml-2 hidden md:inline">/ {activeMap?.name || "sin mapa activo"}</span>
+          {activeMap?.is_public && (
+            <span className="text-[10px] font-semibold bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full uppercase tracking-wide">Público</span>
+          )}
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2">
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="outline" size="sm" data-testid="maps-dropdown">
-                <span className="truncate max-w-[200px]">{activeMap?.name || "Seleccionar mapa"}</span>
+                <span className="truncate max-w-[180px]">{activeMap?.name || "Seleccionar mapa"}</span>
                 <ChevronDown className="w-4 h-4 ml-2" />
               </Button>
             </DropdownMenuTrigger>
@@ -196,8 +221,21 @@ export default function DashboardPage() {
             </DropdownMenuContent>
           </DropdownMenu>
 
+          {activeMap && (
+            <Button
+              onClick={() => setShareOpen(true)}
+              variant="outline"
+              size="sm"
+              data-testid="share-btn"
+              className={activeMap.is_public ? "border-emerald-300 text-emerald-700 hover:bg-emerald-50" : ""}
+            >
+              <Share2 className="w-4 h-4 mr-1" />
+              <span className="hidden sm:inline">Compartir</span>
+            </Button>
+          )}
+
           <Button onClick={() => setCreateOpen(true)} className="bg-[#005FB8] hover:bg-[#004A94] text-white" size="sm" data-testid="new-map-btn">
-            <Plus className="w-4 h-4 mr-1" /> Nuevo mapa
+            <Plus className="w-4 h-4 mr-1" /> <span className="hidden sm:inline">Nuevo</span>
           </Button>
 
           <DropdownMenu>
@@ -222,7 +260,6 @@ export default function DashboardPage() {
         </div>
       </header>
 
-      {/* Main area */}
       <div className="flex-1 relative overflow-hidden">
         {maps.length === 0 ? (
           <div className="h-full flex items-center justify-center p-8">
@@ -250,6 +287,8 @@ export default function DashboardPage() {
               loading={loadingMap}
               onUpdateColumns={handleUpdateColumns}
               onUpdateCoords={handleUpdateCoords}
+              onUpdateStatus={handleUpdateStatus}
+              onUpdateRange={handleUpdateRange}
             />
             <EditPointSheet
               point={selectedPoint}
@@ -268,6 +307,13 @@ export default function DashboardPage() {
         open={createOpen}
         onOpenChange={setCreateOpen}
         onCreated={handleMapCreated}
+      />
+
+      <ShareDialog
+        open={shareOpen}
+        onOpenChange={setShareOpen}
+        map={activeMap}
+        onMapUpdated={handleShareUpdate}
       />
     </div>
   );

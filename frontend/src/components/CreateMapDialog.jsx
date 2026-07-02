@@ -19,7 +19,15 @@ import {
 } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { FileSpreadsheet, Loader2, ChevronRight, MapPin, Info } from "lucide-react";
+import {
+  FileSpreadsheet,
+  Loader2,
+  ChevronRight,
+  MapPin,
+  Info,
+  SlidersHorizontal,
+  Filter,
+} from "lucide-react";
 import api from "@/lib/api";
 import { toast } from "sonner";
 
@@ -31,10 +39,16 @@ export default function CreateMapDialog({ open, onOpenChange, onCreated }) {
   const [sheets, setSheets] = useState([]);
   const [selectedSheet, setSelectedSheet] = useState("");
   const [sheetLoading, setSheetLoading] = useState(false);
+
+  // Data range
+  const [headerRow, setHeaderRow] = useState(1);
+  const [firstCol, setFirstCol] = useState(1);
+
   const [headers, setHeaders] = useState([]);
   const [sampleRows, setSampleRows] = useState([]);
   const [latCol, setLatCol] = useState("");
   const [lngCol, setLngCol] = useState("");
+  const [statusCol, setStatusCol] = useState("__none__");
   const [visibleCols, setVisibleCols] = useState([]);
   const [name, setName] = useState("");
   const [saving, setSaving] = useState(false);
@@ -51,7 +65,10 @@ export default function CreateMapDialog({ open, onOpenChange, onCreated }) {
         setVisibleCols([]);
         setLatCol("");
         setLngCol("");
+        setStatusCol("__none__");
         setName("");
+        setHeaderRow(1);
+        setFirstCol(1);
       }, 200);
       return;
     }
@@ -84,11 +101,13 @@ export default function CreateMapDialog({ open, onOpenChange, onCreated }) {
     }
   };
 
-  const pickSheet = async (sheetName) => {
-    setSelectedSheet(sheetName);
+  const loadSheet = async (sheetName, hRow = headerRow, fCol = firstCol) => {
     setSheetLoading(true);
     try {
-      const res = await api.get(`/onedrive/files/${selectedFile.id}/sheets/${encodeURIComponent(sheetName)}/data`);
+      const res = await api.get(
+        `/onedrive/files/${selectedFile.id}/sheets/${encodeURIComponent(sheetName)}/data`,
+        { params: { header_row: hRow, first_col: fCol } }
+      );
       setHeaders(res.data.headers);
       setSampleRows(res.data.sample_rows || []);
       setLatCol(res.data.suggested_lat_column || "");
@@ -97,13 +116,28 @@ export default function CreateMapDialog({ open, onOpenChange, onCreated }) {
         (h) => h !== res.data.suggested_lat_column && h !== res.data.suggested_lng_column
       );
       setVisibleCols(auto.slice(0, Math.min(4, auto.length)));
-      setName(`${selectedFile.name.replace(/\.xlsx$/i, "")} · ${sheetName}`);
-      setStep(3);
+      if (!name) setName(`${selectedFile.name.replace(/\.xlsx$/i, "")} · ${sheetName}`);
+      return true;
     } catch (e) {
       toast.error(e.response?.data?.detail || "Error leyendo datos de la hoja");
+      return false;
     } finally {
       setSheetLoading(false);
     }
+  };
+
+  const pickSheet = async (sheetName) => {
+    setSelectedSheet(sheetName);
+    const ok = await loadSheet(sheetName, 1, 1);
+    if (ok) setStep(3);
+  };
+
+  const reloadWithRange = async () => {
+    const h = Math.max(1, Number(headerRow) || 1);
+    const c = Math.max(1, Number(firstCol) || 1);
+    setHeaderRow(h);
+    setFirstCol(c);
+    await loadSheet(selectedSheet, h, c);
   };
 
   const toggleCol = (c) => {
@@ -129,6 +163,10 @@ export default function CreateMapDialog({ open, onOpenChange, onCreated }) {
         lat_column: latCol,
         lng_column: lngCol,
         visible_columns: visibleCols,
+        header_row: Math.max(1, Number(headerRow) || 1),
+        first_col: Math.max(1, Number(firstCol) || 1),
+        status_column: statusCol === "__none__" ? null : statusCol,
+        status_visible_values: [],
       });
       toast.success("Mapa creado");
       onCreated(res.data);
@@ -147,7 +185,7 @@ export default function CreateMapDialog({ open, onOpenChange, onCreated }) {
         <DialogHeader className="p-6 pb-3">
           <DialogTitle className="font-heading text-xl">Nuevo mapa desde Excel</DialogTitle>
           <DialogDescription className="text-xs">
-            Paso {step} de 3 · {step === 1 ? "Elige un archivo .xlsx" : step === 2 ? "Selecciona una hoja" : "Configura columnas"}
+            Paso {step} de 3 · {step === 1 ? "Elige un archivo .xlsx" : step === 2 ? "Selecciona una hoja" : "Configura rango y columnas"}
           </DialogDescription>
 
           <div className="flex items-center gap-1 pt-3">
@@ -157,8 +195,7 @@ export default function CreateMapDialog({ open, onOpenChange, onCreated }) {
           </div>
         </DialogHeader>
 
-        <div className="px-6 pb-2 min-h-[300px] max-h-[60vh] overflow-hidden flex flex-col">
-          {/* Step 1: file picker */}
+        <div className="px-6 pb-2 min-h-[300px] max-h-[65vh] overflow-hidden flex flex-col">
           {step === 1 && (
             <ScrollArea className="flex-1 -mx-1 px-1 thin-scroll">
               {filesLoading ? (
@@ -192,7 +229,6 @@ export default function CreateMapDialog({ open, onOpenChange, onCreated }) {
             </ScrollArea>
           )}
 
-          {/* Step 2: sheet picker */}
           {step === 2 && (
             <div className="flex-1 overflow-auto py-2">
               {sheetLoading ? (
@@ -223,7 +259,6 @@ export default function CreateMapDialog({ open, onOpenChange, onCreated }) {
             </div>
           )}
 
-          {/* Step 3: columns config */}
           {step === 3 && (
             <ScrollArea className="flex-1 thin-scroll">
               <div className="space-y-4 py-2 pr-2">
@@ -232,15 +267,57 @@ export default function CreateMapDialog({ open, onOpenChange, onCreated }) {
                   <Input value={name} onChange={(e) => setName(e.target.value)} data-testid="map-name-input" />
                 </div>
 
+                {/* Data range */}
+                <div className="border border-slate-200 rounded-lg p-4 bg-slate-50/50 space-y-3">
+                  <div className="flex items-center gap-2">
+                    <SlidersHorizontal className="w-4 h-4 text-[#005FB8]" />
+                    <Label className="text-xs font-semibold uppercase tracking-wider text-slate-700">Rango de datos</Label>
+                  </div>
+                  <p className="text-xs text-slate-500 -mt-1">Delimita desde dónde comienzan los datos en tu Excel.</p>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <Label className="text-[10px] uppercase text-slate-400 mb-1 block">Fila de encabezados</Label>
+                      <Input
+                        type="number"
+                        min={1}
+                        value={headerRow}
+                        onChange={(e) => setHeaderRow(e.target.value)}
+                        data-testid="header-row-input-create"
+                      />
+                    </div>
+                    <div>
+                      <Label className="text-[10px] uppercase text-slate-400 mb-1 block">Primera columna</Label>
+                      <Input
+                        type="number"
+                        min={1}
+                        value={firstCol}
+                        onChange={(e) => setFirstCol(e.target.value)}
+                        data-testid="first-col-input-create"
+                      />
+                    </div>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="w-full h-8 text-xs"
+                    onClick={reloadWithRange}
+                    disabled={sheetLoading}
+                    data-testid="apply-range-create-btn"
+                  >
+                    {sheetLoading ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : null}
+                    Recargar columnas con este rango
+                  </Button>
+                </div>
+
+                {/* Coord columns */}
                 <div className="border border-slate-200 rounded-lg p-4 bg-slate-50/50 space-y-3">
                   <div className="flex items-center gap-2">
                     <MapPin className="w-4 h-4 text-[#005FB8]" />
                     <Label className="text-xs font-semibold uppercase tracking-wider text-slate-700">Columnas de coordenadas</Label>
                   </div>
-
                   <div className="grid grid-cols-2 gap-3">
                     <div>
-                      <Label className="text-[10px] uppercase tracking-wider text-slate-500 mb-1 block">Latitud</Label>
+                      <Label className="text-[10px] uppercase text-slate-400 mb-1 block">Latitud</Label>
                       <Select value={latCol} onValueChange={setLatCol}>
                         <SelectTrigger data-testid="lat-column-select"><SelectValue placeholder="Elige columna" /></SelectTrigger>
                         <SelectContent>
@@ -251,7 +328,7 @@ export default function CreateMapDialog({ open, onOpenChange, onCreated }) {
                       </Select>
                     </div>
                     <div>
-                      <Label className="text-[10px] uppercase tracking-wider text-slate-500 mb-1 block">Longitud</Label>
+                      <Label className="text-[10px] uppercase text-slate-400 mb-1 block">Longitud</Label>
                       <Select value={lngCol} onValueChange={setLngCol}>
                         <SelectTrigger data-testid="lng-column-select"><SelectValue placeholder="Elige columna" /></SelectTrigger>
                         <SelectContent>
@@ -263,7 +340,6 @@ export default function CreateMapDialog({ open, onOpenChange, onCreated }) {
                     </div>
                   </div>
 
-                  {/* Preview sample */}
                   {sampleRows.length > 0 && latCol && lngCol && (
                     <div className="bg-white border border-slate-200 rounded-md p-2 text-xs">
                       <p className="text-[10px] uppercase tracking-wider text-slate-500 mb-1 font-semibold flex items-center gap-1">
@@ -277,6 +353,25 @@ export default function CreateMapDialog({ open, onOpenChange, onCreated }) {
                   )}
                 </div>
 
+                {/* Status column */}
+                <div className="border border-slate-200 rounded-lg p-4 bg-slate-50/50 space-y-2">
+                  <div className="flex items-center gap-2">
+                    <Filter className="w-4 h-4 text-[#005FB8]" />
+                    <Label className="text-xs font-semibold uppercase tracking-wider text-slate-700">Columna de estado (opcional)</Label>
+                  </div>
+                  <p className="text-xs text-slate-500 -mt-1">Podrás usarla después para filtrar cuáles marcadores se ven normales y cuáles tenues.</p>
+                  <Select value={statusCol} onValueChange={setStatusCol}>
+                    <SelectTrigger data-testid="status-col-select-create"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__none__">Ninguna</SelectItem>
+                      {displayCols.map((h) => (
+                        <SelectItem key={h} value={h}>{h}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {/* Visible columns */}
                 <div>
                   <div className="flex items-center justify-between mb-2">
                     <Label className="text-xs font-semibold uppercase tracking-wider text-slate-500">Columnas visibles en el marcador</Label>

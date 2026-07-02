@@ -106,6 +106,10 @@ class MapCreate(BaseModel):
     lat_column: str
     lng_column: str
     visible_columns: List[str] = []
+    header_row: int = 1  # 1-indexed row that contains headers
+    first_col: int = 1   # 1-indexed first column to consider
+    status_column: Optional[str] = None
+    status_visible_values: List[str] = []
 
 
 class MapUpdate(BaseModel):
@@ -113,6 +117,10 @@ class MapUpdate(BaseModel):
     visible_columns: Optional[List[str]] = None
     lat_column: Optional[str] = None
     lng_column: Optional[str] = None
+    header_row: Optional[int] = None
+    first_col: Optional[int] = None
+    status_column: Optional[str] = None
+    status_visible_values: Optional[List[str]] = None
 
 
 class PointEdit(BaseModel):
@@ -280,38 +288,65 @@ async def list_sheets(item_id: str, x_session_id: str = Header(...)):
     return {"sheets": wb.sheetnames}
 
 
+def _parse_sheet(
+    ws,
+    header_row: int = 1,
+    first_col: int = 1,
+):
+    """Read sheet with configurable start row/col. Returns (headers, data_rows).
+    header_row is 1-indexed; first_col is 1-indexed.
+    """
+    header_row = max(1, header_row)
+    first_col = max(1, first_col)
+    all_rows = list(ws.iter_rows(values_only=True))
+    if len(all_rows) < header_row:
+        return [], []
+    header_line = all_rows[header_row - 1]
+    # Slice from first_col-1 and drop trailing None headers
+    header_slice = list(header_line)[first_col - 1:]
+    # Trim trailing empty header cells
+    while header_slice and (header_slice[-1] is None or str(header_slice[-1]).strip() == ""):
+        header_slice.pop()
+    headers = [str(h) if h is not None else f"col_{i}" for i, h in enumerate(header_slice)]
+
+    data_rows = []
+    for r in all_rows[header_row:]:
+        row_slice = list(r)[first_col - 1: first_col - 1 + len(headers)]
+        vals = row_slice + [None] * (len(headers) - len(row_slice))
+        # Skip rows that are entirely empty
+        if all(v is None or (isinstance(v, str) and v.strip() == "") for v in vals):
+            continue
+        data_rows.append(vals)
+    return headers, data_rows
+
+
 @api_router.get("/onedrive/files/{item_id}/sheets/{sheet_name}/data")
-async def sheet_data(item_id: str, sheet_name: str, x_session_id: str = Header(...)):
+async def sheet_data(
+    item_id: str,
+    sheet_name: str,
+    header_row: int = 1,
+    first_col: int = 1,
+    x_session_id: str = Header(...),
+):
     s = await get_session(x_session_id)
     wb = await _load_workbook(s, item_id)
     if sheet_name not in wb.sheetnames:
         raise HTTPException(status_code=404, detail="Sheet not found")
     ws = wb[sheet_name]
-    rows_iter = ws.iter_rows(values_only=True)
-    try:
-        headers_row = next(rows_iter)
-    except StopIteration:
-        return {"headers": [], "rows": [], "sample_rows": []}
+    headers, data_rows = _parse_sheet(ws, header_row=header_row, first_col=first_col)
 
-    headers = [str(h) if h is not None else f"col_{i}" for i, h in enumerate(headers_row)]
     if not headers:
-        raise HTTPException(status_code=400, detail="Sheet has no columns")
+        raise HTTPException(status_code=400, detail="La hoja no tiene columnas en el rango indicado.")
 
     sample_rows = []
-    all_rows = []
-    for idx, row in enumerate(rows_iter):
-        vals = list(row) + [None] * (len(headers) - len(row))
-        vals = vals[:len(headers)]
-        data_dict = {}
+    for vals in data_rows[:3]:
+        d = {}
         for h, v in zip(headers, vals):
             if isinstance(v, datetime):
                 v = v.isoformat()
-            data_dict[h] = v
-        all_rows.append({"row_index": idx, "data": data_dict})
-        if len(sample_rows) < 3:
-            sample_rows.append(data_dict)
+            d[h] = v
+        sample_rows.append(d)
 
-    # Auto-detect lat/lng candidates by header name
     lat_candidates = [h for h in headers if any(k in h.lower() for k in ["lat", "latitud"])]
     lng_candidates = [h for h in headers if any(k in h.lower() for k in ["lon", "lng", "longitud"])]
     suggested_lat = lat_candidates[0] if lat_candidates else (headers[-2] if len(headers) >= 2 else None)
@@ -322,7 +357,7 @@ async def sheet_data(item_id: str, sheet_name: str, x_session_id: str = Header(.
         "sample_rows": sample_rows,
         "suggested_lat_column": suggested_lat,
         "suggested_lng_column": suggested_lng,
-        "row_count": len(all_rows),
+        "row_count": len(data_rows),
     }
 
 
@@ -342,7 +377,16 @@ async def create_map(payload: MapCreate, x_session_id: str = Header(...)):
         "lat_column": payload.lat_column,
         "lng_column": payload.lng_column,
         "visible_columns": payload.visible_columns,
+        "header_row": payload.header_row,
+        "first_col": payload.first_col,
+        "status_column": payload.status_column,
+        "status_visible_values": payload.status_visible_values,
         "point_overrides": {},
+        "is_public": False,
+        "share_token": None,
+        "cached_rows": [],
+        "cached_at": None,
+        "cached_headers": [],
         "created_at": now_iso(),
         "updated_at": now_iso(),
     }
@@ -417,42 +461,27 @@ async def reset_point(map_id: str, row_index: int, x_session_id: str = Header(..
     return updated
 
 
-@api_router.get("/maps/{map_id}/data")
-async def map_data(map_id: str, x_session_id: str = Header(...)):
-    """Combine map config with live Excel data + overrides applied."""
-    s = await get_session(x_session_id)
-    m = await db.maps.find_one({"id": map_id, "user_id": s["user_id"]}, {"_id": 0})
-    if not m:
-        raise HTTPException(status_code=404, detail="Map not found")
-    wb = await _load_workbook(s, m["file_id"])
-    if m["sheet_name"] not in wb.sheetnames:
-        raise HTTPException(status_code=404, detail="Sheet no longer exists in workbook")
-    ws = wb[m["sheet_name"]]
-    rows_iter = ws.iter_rows(values_only=True)
-    try:
-        headers_row = next(rows_iter)
-    except StopIteration:
-        return {"map": m, "headers": [], "rows": []}
-    headers = [str(h) if h is not None else f"col_{i}" for i, h in enumerate(headers_row)]
+def _build_map_rows(headers, data_rows, m):
+    """Given headers + raw data_rows (list of lists) + map doc, build normalized rows."""
     lat_col = m.get("lat_column")
     lng_col = m.get("lng_column")
-    # Backwards-compat: if missing, default to last-two columns
-    if not lat_col and len(headers) >= 2:
+    status_col = m.get("status_column")
+    status_visible = set(m.get("status_visible_values") or [])
+    # Backwards-compat fallback
+    if (not lat_col or lat_col not in headers) and len(headers) >= 2:
         lat_col = headers[-2]
-    if not lng_col and len(headers) >= 1:
+    if (not lng_col or lng_col not in headers) and len(headers) >= 1:
         lng_col = headers[-1]
     if lat_col not in headers or lng_col not in headers:
         raise HTTPException(
             status_code=400,
-            detail=f"Columnas de coordenadas ({lat_col}, {lng_col}) no encontradas en la hoja. Disponibles: {headers}",
+            detail=f"Columnas de coordenadas ({lat_col}, {lng_col}) no encontradas. Disponibles: {headers}",
         )
     lat_idx = headers.index(lat_col)
     lng_idx = headers.index(lng_col)
     overrides = m.get("point_overrides", {}) or {}
     rows = []
-    for idx, row in enumerate(rows_iter):
-        vals = list(row) + [None] * (len(headers) - len(row))
-        vals = vals[:len(headers)]
+    for idx, vals in enumerate(data_rows):
         try:
             lat_raw = vals[lat_idx]
             lat = float(lat_raw) if lat_raw is not None and str(lat_raw).strip() != "" else None
@@ -473,19 +502,149 @@ async def map_data(map_id: str, x_session_id: str = Header(...)):
             if k in (lat_col, lng_col):
                 continue
             data_dict[k] = v
+        # Status-based visibility
+        is_visible = True
+        if status_col and status_col in headers:
+            status_val = data_dict.get(status_col)
+            status_str = "" if status_val is None else str(status_val)
+            # If no status_visible values configured, everything is visible
+            if status_visible:
+                is_visible = status_str in status_visible
         rows.append({
             "row_index": idx,
             "lat": lat,
             "lng": lng,
             "data": data_dict,
             "edited": bool(ov),
+            "visible": is_visible,
         })
+    return rows, lat_col, lng_col
+
+
+@api_router.get("/maps/{map_id}/data")
+async def map_data(map_id: str, x_session_id: str = Header(...)):
+    """Combine map config with live Excel data + overrides applied."""
+    s = await get_session(x_session_id)
+    m = await db.maps.find_one({"id": map_id, "user_id": s["user_id"]}, {"_id": 0})
+    if not m:
+        raise HTTPException(status_code=404, detail="Map not found")
+    wb = await _load_workbook(s, m["file_id"])
+    if m["sheet_name"] not in wb.sheetnames:
+        raise HTTPException(status_code=404, detail="Sheet no longer exists in workbook")
+    ws = wb[m["sheet_name"]]
+    header_row = m.get("header_row") or 1
+    first_col = m.get("first_col") or 1
+    headers, data_rows = _parse_sheet(ws, header_row=header_row, first_col=first_col)
+
+    rows, lat_col, lng_col = _build_map_rows(headers, data_rows, m)
+
+    # Cache snapshot for public views
+    await db.maps.update_one(
+        {"id": map_id},
+        {"$set": {
+            "cached_rows": [{"row_index": r["row_index"], "lat": r["lat"], "lng": r["lng"],
+                             "data": r["data"], "edited": r["edited"], "visible": r["visible"]}
+                            for r in rows],
+            "cached_headers": headers,
+            "cached_at": now_iso(),
+        }},
+    )
+
+    # Get unique status values if status_column configured
+    status_values = []
+    status_col = m.get("status_column")
+    if status_col and status_col in headers:
+        seen_vals = set()
+        for r in rows:
+            v = r["data"].get(status_col)
+            if v is not None:
+                s_val = str(v)
+                if s_val not in seen_vals:
+                    seen_vals.add(s_val)
+                    status_values.append(s_val)
+
     return {
         "map": m,
         "headers": headers,
         "lat_column": lat_col,
         "lng_column": lng_col,
+        "status_column": status_col,
+        "status_values": status_values,
         "rows": rows,
+    }
+
+
+# ============ Share / Public ============
+
+@api_router.post("/maps/{map_id}/share")
+async def enable_share(map_id: str, x_session_id: str = Header(...)):
+    s = await get_session(x_session_id)
+    m = await db.maps.find_one({"id": map_id, "user_id": s["user_id"]})
+    if not m:
+        raise HTTPException(status_code=404, detail="Map not found")
+    token = m.get("share_token") or uuid.uuid4().hex
+    await db.maps.update_one(
+        {"id": map_id},
+        {"$set": {"is_public": True, "share_token": token, "updated_at": now_iso()}},
+    )
+    updated = await db.maps.find_one({"id": map_id}, {"_id": 0})
+    return {"share_token": token, "is_public": True, "map": updated}
+
+
+@api_router.post("/maps/{map_id}/share/rotate")
+async def rotate_share(map_id: str, x_session_id: str = Header(...)):
+    s = await get_session(x_session_id)
+    m = await db.maps.find_one({"id": map_id, "user_id": s["user_id"]})
+    if not m:
+        raise HTTPException(status_code=404, detail="Map not found")
+    token = uuid.uuid4().hex
+    await db.maps.update_one(
+        {"id": map_id},
+        {"$set": {"is_public": True, "share_token": token, "updated_at": now_iso()}},
+    )
+    return {"share_token": token, "is_public": True}
+
+
+@api_router.delete("/maps/{map_id}/share")
+async def disable_share(map_id: str, x_session_id: str = Header(...)):
+    s = await get_session(x_session_id)
+    m = await db.maps.find_one({"id": map_id, "user_id": s["user_id"]})
+    if not m:
+        raise HTTPException(status_code=404, detail="Map not found")
+    await db.maps.update_one(
+        {"id": map_id},
+        {"$set": {"is_public": False, "updated_at": now_iso()}},
+    )
+    return {"is_public": False}
+
+
+@api_router.get("/public/maps/{share_token}")
+async def public_map(share_token: str):
+    """Serves cached snapshot of a shared map. No auth required."""
+    m = await db.maps.find_one(
+        {"share_token": share_token, "is_public": True},
+        {"_id": 0, "user_id": 0, "file_id": 0, "point_overrides": 0},
+    )
+    if not m:
+        raise HTTPException(status_code=404, detail="Mapa no encontrado o no compartido")
+    cached_rows = m.get("cached_rows") or []
+    cached_headers = m.get("cached_headers") or []
+    return {
+        "map": {
+            "id": m.get("id"),
+            "name": m.get("name"),
+            "file_name": m.get("file_name"),
+            "sheet_name": m.get("sheet_name"),
+            "visible_columns": m.get("visible_columns", []),
+            "status_column": m.get("status_column"),
+            "status_visible_values": m.get("status_visible_values", []),
+        },
+        "headers": cached_headers,
+        "lat_column": m.get("lat_column"),
+        "lng_column": m.get("lng_column"),
+        "status_column": m.get("status_column"),
+        "rows": cached_rows,
+        "cached_at": m.get("cached_at"),
     }
 
 

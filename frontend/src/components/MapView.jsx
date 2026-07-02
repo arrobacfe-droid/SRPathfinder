@@ -60,7 +60,7 @@ export default function MapView({ mapData, loading, onMarkerClick, selectedPoint
         >
           {validPoints.map((p) => {
             const isSelected = selectedPoint?.row_index === p.row_index;
-            const isHovered = hovered?.row_index === p.row_index;
+            const isDimmed = p.visible === false;
             return (
               <AdvancedMarker
                 key={p.row_index}
@@ -69,8 +69,11 @@ export default function MapView({ mapData, loading, onMarkerClick, selectedPoint
                 onMouseEnter={() => setHovered(p)}
                 onMouseLeave={() => setHovered(null)}
               >
-                <div className={`relative cursor-pointer transition-transform ${isSelected ? "scale-125" : ""}`}
-                     data-testid={`marker-${p.row_index}`}>
+                <div
+                  className={`relative cursor-pointer transition-all ${isSelected ? "scale-125" : ""}`}
+                  style={{ opacity: isDimmed ? 0.25 : 1 }}
+                  data-testid={`marker-${p.row_index}`}
+                >
                   <div className={`w-6 h-6 rounded-full border-2 border-white shadow-lg flex items-center justify-center
                     ${p.edited ? "bg-amber-500" : "bg-[#005FB8]"} ${isSelected ? "marker-active" : ""}`}>
                     <div className="w-2 h-2 rounded-full bg-white" />
