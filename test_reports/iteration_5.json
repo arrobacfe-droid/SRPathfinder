@@ -1,0 +1,58 @@
+{
+  "summary": "Iteration 5: verified new /preview endpoint auth guard and __EMPTY__ sentinel persistence in status_visible_values. All 53 backend tests pass (43 regression + 10 new).",
+  "tested_scope": ["backend"],
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "feature_verification": {
+    "endpoints_covered": [
+      "GET /api/onedrive/files/{item_id}/sheets/{sheet_name}/preview — auth guard (401 without/invalid session, 422 when header missing, valid session bypasses auth guard and returns Graph-layer error with fake token)",
+      "POST /api/maps with status_visible_values=[..., '__EMPTY__'] persists sentinel",
+      "PATCH /api/maps/{id} accepts adding/removing '__EMPTY__' in status_visible_values (persisted in Mongo, returned by GET)"
+    ],
+    "code_inspection_only": [
+      "GET /api/maps/{id}/data — verified via source that response now includes 'status_has_empty' (bool) and status_values excludes empty entries (server.py ~608–631). Not e2e testable without real MS Graph token.",
+      "_build_map_rows — verified via source that '__EMPTY__' in status_visible acts as sentinel for empty status cells (server.py ~560–567)."
+    ]
+  },
+  "passed": [
+    "GET /preview without session -> 401",
+    "GET /preview without x-session-id header -> 422",
+    "GET /preview with unknown session -> 401",
+    "GET /preview with valid injected session bypasses auth guard (Graph-layer error, not 'Missing/Invalid session')",
+    "POST /maps with status_visible_values=['Activo','__EMPTY__'] persists both values",
+    "PATCH /maps adds '__EMPTY__' to status_visible_values (verified via response, subsequent GET, and Mongo doc)",
+    "PATCH /maps with status_visible_values=['__EMPTY__'] only persists correctly",
+    "PATCH /maps can remove '__EMPTY__' from array",
+    "Source assertion: map_data returns 'status_has_empty' key",
+    "Source assertion: _build_map_rows handles '__EMPTY__' sentinel",
+    "Regression: all 43 iteration_4 tests still green (share, public, status/range config, MS OAuth, map CRUD, point overrides)"
+  ],
+  "failed": [],
+  "test_report_links": [
+    "/app/backend/tests/test_preview_and_empty_status.py",
+    "/app/backend/tests/test_share_and_status.py",
+    "/app/backend/tests/test_map_columns_config.py",
+    "/app/backend/tests/test_ms_oauth_callback.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py /preview (line ~323): max_rows/max_cols are int query params without bounds. A malicious/large request (max_rows=1000000, max_cols=1000000) would allocate a huge grid pre-truncation because rows are appended before the length check on the outer break. The inner slicing '[:max_cols]' bounds columns per row, and outer break bounds rows, so effective memory is O(max_rows * max_cols) — still unbounded. Add Field(ge=1, le=200) equivalent validation.",
+    "/preview auto-detection: 'first row with 3+ non-empty cells' is a heuristic — for sheets with 1–2 columns of real data this will fall back to (1,1) even if the true header is on row 5. Consider also honoring an explicit query param when the frontend already knows the answer.",
+    "'__EMPTY__' magic string is used as sentinel in both the model and _build_map_rows. Consider a module-level constant (STATUS_EMPTY_SENTINEL = '__EMPTY__') to avoid drift between endpoints, and document it in the API spec so frontend/backend stay in sync.",
+    "MapUpdate.status_visible_values is List[str] with no validation — a client could accidentally send duplicates or whitespace-only entries; consider normalizing (strip, dedupe) on write.",
+    "map_data (line ~624) response now returns both 'status_column' and includes 'map' (which also has status_column) — mild duplication carried over from iteration 4.",
+    "server.py has grown to ~730 lines. Continued growth reinforces prior recommendation to split into routers before adding more features.",
+    "The /preview endpoint doesn't cache the workbook; every call to /preview -> /data -> /data re-downloads the .xlsx from Graph. For large files this is expensive; consider a short-lived (e.g. 60s) in-memory cache keyed by (user_id, file_id) with etag/lastModifiedDateTime invalidation."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_preview_and_empty_status.py (new, 10 tests across 3 classes)"
+  ],
+  "success_rate": {"backend": "100% (53/53)", "frontend": "not tested (skipped per request)"},
+  "test_credentials": "None. One TEST_ session/user (E) injected directly into MongoDB.",
+  "seed_data_creation": "Module-scoped fixture session_e injects a TEST_ prefixed session+user into Mongo and cleans up sessions + maps in teardown. Post-run verification: 0 TEST_ sessions / 0 TEST_ maps remain.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Baseline is now 53 tests in /app/backend/tests/ (test_ms_oauth_callback.py + test_map_columns_config.py + test_share_and_status.py + test_preview_and_empty_status.py, ~6s with -n auto). Endpoints not e2e testable (need real MS Graph token): /onedrive/files, /onedrive/files/{id}/sheets, /onedrive/files/{id}/sheets/{name}/preview (Graph part), /onedrive/files/{id}/sheets/{name}/data, /maps/{id}/data. For those, verification is either via source inspection or by mocking httpx.AsyncClient. The status_has_empty behavior and _build_map_rows __EMPTY__ handling would benefit from unit tests of the helper functions with mocked openpyxl inputs.",
+  "rca_of_the_issue": "N/A — feature verification, no bugs encountered."
+}

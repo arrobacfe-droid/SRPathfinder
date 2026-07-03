@@ -320,6 +320,57 @@ def _parse_sheet(
     return headers, data_rows
 
 
+@api_router.get("/onedrive/files/{item_id}/sheets/{sheet_name}/preview")
+async def sheet_preview(
+    item_id: str,
+    sheet_name: str,
+    max_rows: int = 25,
+    max_cols: int = 20,
+    x_session_id: str = Header(...),
+):
+    """Return raw grid (no header assumption) so frontend can render an Excel-like preview
+    where the user clicks a cell to define the data start (header_row, first_col)."""
+    s = await get_session(x_session_id)
+    wb = await _load_workbook(s, item_id)
+    if sheet_name not in wb.sheetnames:
+        raise HTTPException(status_code=404, detail="Sheet not found")
+    ws = wb[sheet_name]
+    grid = []
+    for row in ws.iter_rows(values_only=True):
+        row_cells = []
+        for v in list(row)[:max_cols]:
+            if isinstance(v, datetime):
+                v = v.isoformat()
+            row_cells.append(v)
+        # Pad row to max_cols with None
+        while len(row_cells) < max_cols:
+            row_cells.append(None)
+        grid.append(row_cells)
+        if len(grid) >= max_rows:
+            break
+
+    # Auto-detect: find first row that has 3+ non-empty text cells → likely header row
+    suggested_header_row = 1
+    suggested_first_col = 1
+    for r_idx, row in enumerate(grid):
+        non_empty_indices = [
+            c_idx for c_idx, v in enumerate(row)
+            if v is not None and str(v).strip() != ""
+        ]
+        if len(non_empty_indices) >= 3:
+            suggested_header_row = r_idx + 1
+            suggested_first_col = non_empty_indices[0] + 1
+            break
+
+    return {
+        "grid": grid,
+        "rows": len(grid),
+        "cols": max_cols,
+        "suggested_header_row": suggested_header_row,
+        "suggested_first_col": suggested_first_col,
+    }
+
+
 @api_router.get("/onedrive/files/{item_id}/sheets/{sheet_name}/data")
 async def sheet_data(
     item_id: str,
@@ -506,10 +557,14 @@ def _build_map_rows(headers, data_rows, m):
         is_visible = True
         if status_col and status_col in headers:
             status_val = data_dict.get(status_col)
+            is_empty = status_val is None or (isinstance(status_val, str) and status_val.strip() == "")
             status_str = "" if status_val is None else str(status_val)
             # If no status_visible values configured, everything is visible
             if status_visible:
-                is_visible = status_str in status_visible
+                if is_empty:
+                    is_visible = "__EMPTY__" in status_visible
+                else:
+                    is_visible = status_str in status_visible
         rows.append({
             "row_index": idx,
             "lat": lat,
@@ -552,16 +607,19 @@ async def map_data(map_id: str, x_session_id: str = Header(...)):
 
     # Get unique status values if status_column configured
     status_values = []
+    has_empty = False
     status_col = m.get("status_column")
     if status_col and status_col in headers:
         seen_vals = set()
         for r in rows:
             v = r["data"].get(status_col)
-            if v is not None:
-                s_val = str(v)
-                if s_val not in seen_vals:
-                    seen_vals.add(s_val)
-                    status_values.append(s_val)
+            if v is None or (isinstance(v, str) and v.strip() == ""):
+                has_empty = True
+                continue
+            s_val = str(v)
+            if s_val not in seen_vals:
+                seen_vals.add(s_val)
+                status_values.append(s_val)
 
     return {
         "map": m,
@@ -570,6 +628,7 @@ async def map_data(map_id: str, x_session_id: str = Header(...)):
         "lng_column": lng_col,
         "status_column": status_col,
         "status_values": status_values,
+        "status_has_empty": has_empty,
         "rows": rows,
     }
 

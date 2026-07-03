@@ -25,25 +25,26 @@ import {
   ChevronRight,
   MapPin,
   Info,
-  SlidersHorizontal,
   Filter,
 } from "lucide-react";
 import api from "@/lib/api";
 import { toast } from "sonner";
+import SheetGridPicker from "@/components/SheetGridPicker";
 
 export default function CreateMapDialog({ open, onOpenChange, onCreated }) {
   const [step, setStep] = useState(1);
+  // Step 1
   const [files, setFiles] = useState([]);
   const [filesLoading, setFilesLoading] = useState(false);
   const [selectedFile, setSelectedFile] = useState(null);
+  // Step 2 (sheet + range picker)
   const [sheets, setSheets] = useState([]);
   const [selectedSheet, setSelectedSheet] = useState("");
-  const [sheetLoading, setSheetLoading] = useState(false);
-
-  // Data range
+  const [grid, setGrid] = useState([]);
+  const [gridLoading, setGridLoading] = useState(false);
   const [headerRow, setHeaderRow] = useState(1);
   const [firstCol, setFirstCol] = useState(1);
-
+  // Step 3 (columns)
   const [headers, setHeaders] = useState([]);
   const [sampleRows, setSampleRows] = useState([]);
   const [latCol, setLatCol] = useState("");
@@ -51,6 +52,7 @@ export default function CreateMapDialog({ open, onOpenChange, onCreated }) {
   const [statusCol, setStatusCol] = useState("__none__");
   const [visibleCols, setVisibleCols] = useState([]);
   const [name, setName] = useState("");
+  const [loadingHeaders, setLoadingHeaders] = useState(false);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -60,6 +62,7 @@ export default function CreateMapDialog({ open, onOpenChange, onCreated }) {
         setSelectedFile(null);
         setSheets([]);
         setSelectedSheet("");
+        setGrid([]);
         setHeaders([]);
         setSampleRows([]);
         setVisibleCols([]);
@@ -89,24 +92,51 @@ export default function CreateMapDialog({ open, onOpenChange, onCreated }) {
 
   const pickFile = async (file) => {
     setSelectedFile(file);
-    setSheetLoading(true);
+    setFilesLoading(true);
     try {
       const res = await api.get(`/onedrive/files/${file.id}/sheets`);
       setSheets(res.data.sheets);
+      // Auto-pick first sheet
+      if (res.data.sheets.length > 0) {
+        await pickSheet(file.id, res.data.sheets[0]);
+      }
       setStep(2);
     } catch (e) {
       toast.error("Error leyendo hojas del Excel");
     } finally {
-      setSheetLoading(false);
+      setFilesLoading(false);
     }
   };
 
-  const loadSheet = async (sheetName, hRow = headerRow, fCol = firstCol) => {
-    setSheetLoading(true);
+  const pickSheet = async (fileId, sheetName) => {
+    setSelectedSheet(sheetName);
+    setGridLoading(true);
     try {
       const res = await api.get(
-        `/onedrive/files/${selectedFile.id}/sheets/${encodeURIComponent(sheetName)}/data`,
-        { params: { header_row: hRow, first_col: fCol } }
+        `/onedrive/files/${fileId}/sheets/${encodeURIComponent(sheetName)}/preview`,
+        { params: { max_rows: 30, max_cols: 20 } }
+      );
+      setGrid(res.data.grid);
+      setHeaderRow(res.data.suggested_header_row || 1);
+      setFirstCol(res.data.suggested_first_col || 1);
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Error leyendo vista previa");
+    } finally {
+      setGridLoading(false);
+    }
+  };
+
+  const changeSheet = (sheetName) => {
+    if (sheetName === selectedSheet) return;
+    pickSheet(selectedFile.id, sheetName);
+  };
+
+  const goToStep3 = async () => {
+    setLoadingHeaders(true);
+    try {
+      const res = await api.get(
+        `/onedrive/files/${selectedFile.id}/sheets/${encodeURIComponent(selectedSheet)}/data`,
+        { params: { header_row: headerRow, first_col: firstCol } }
       );
       setHeaders(res.data.headers);
       setSampleRows(res.data.sample_rows || []);
@@ -116,28 +146,13 @@ export default function CreateMapDialog({ open, onOpenChange, onCreated }) {
         (h) => h !== res.data.suggested_lat_column && h !== res.data.suggested_lng_column
       );
       setVisibleCols(auto.slice(0, Math.min(4, auto.length)));
-      if (!name) setName(`${selectedFile.name.replace(/\.xlsx$/i, "")} · ${sheetName}`);
-      return true;
+      if (!name) setName(`${selectedFile.name.replace(/\.xlsx$/i, "")} · ${selectedSheet}`);
+      setStep(3);
     } catch (e) {
-      toast.error(e.response?.data?.detail || "Error leyendo datos de la hoja");
-      return false;
+      toast.error(e.response?.data?.detail || "No se pudieron leer las columnas con este rango. Selecciona una celda diferente en la vista.");
     } finally {
-      setSheetLoading(false);
+      setLoadingHeaders(false);
     }
-  };
-
-  const pickSheet = async (sheetName) => {
-    setSelectedSheet(sheetName);
-    const ok = await loadSheet(sheetName, 1, 1);
-    if (ok) setStep(3);
-  };
-
-  const reloadWithRange = async () => {
-    const h = Math.max(1, Number(headerRow) || 1);
-    const c = Math.max(1, Number(firstCol) || 1);
-    setHeaderRow(h);
-    setFirstCol(c);
-    await loadSheet(selectedSheet, h, c);
   };
 
   const toggleCol = (c) => {
@@ -181,11 +196,11 @@ export default function CreateMapDialog({ open, onOpenChange, onCreated }) {
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-2xl p-0 overflow-hidden" data-testid="create-map-dialog">
+      <DialogContent className="sm:max-w-3xl p-0 overflow-hidden" data-testid="create-map-dialog">
         <DialogHeader className="p-6 pb-3">
           <DialogTitle className="font-heading text-xl">Nuevo mapa desde Excel</DialogTitle>
           <DialogDescription className="text-xs">
-            Paso {step} de 3 · {step === 1 ? "Elige un archivo .xlsx" : step === 2 ? "Selecciona una hoja" : "Configura rango y columnas"}
+            Paso {step} de 3 · {step === 1 ? "Elige un archivo .xlsx" : step === 2 ? "Selecciona hoja y rango de datos" : "Configura columnas"}
           </DialogDescription>
 
           <div className="flex items-center gap-1 pt-3">
@@ -195,7 +210,8 @@ export default function CreateMapDialog({ open, onOpenChange, onCreated }) {
           </div>
         </DialogHeader>
 
-        <div className="px-6 pb-2 min-h-[300px] max-h-[65vh] overflow-hidden flex flex-col">
+        <div className="px-6 pb-2 min-h-[380px] max-h-[70vh] overflow-hidden flex flex-col">
+          {/* Step 1: file */}
           {step === 1 && (
             <ScrollArea className="flex-1 -mx-1 px-1 thin-scroll">
               {filesLoading ? (
@@ -210,7 +226,7 @@ export default function CreateMapDialog({ open, onOpenChange, onCreated }) {
                     <button
                       key={f.id}
                       onClick={() => pickFile(f)}
-                      disabled={sheetLoading}
+                      disabled={filesLoading}
                       className="w-full flex items-center gap-3 p-3 rounded-lg border border-slate-200 hover:border-[#005FB8] hover:bg-[#005FB8]/5 transition-all text-left"
                       data-testid={`file-${f.id}`}
                     >
@@ -229,36 +245,41 @@ export default function CreateMapDialog({ open, onOpenChange, onCreated }) {
             </ScrollArea>
           )}
 
+          {/* Step 2: sheet + grid picker */}
           {step === 2 && (
-            <div className="flex-1 overflow-auto py-2">
-              {sheetLoading ? (
-                <div className="flex items-center justify-center py-12">
+            <div className="flex-1 overflow-hidden flex flex-col gap-3 py-2">
+              <div className="flex items-center gap-3">
+                <Label className="text-xs font-semibold uppercase tracking-wider text-slate-500 whitespace-nowrap">Hoja</Label>
+                <Select value={selectedSheet} onValueChange={changeSheet}>
+                  <SelectTrigger className="w-full" data-testid="sheet-select"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {sheets.map((s) => (
+                      <SelectItem key={s} value={s}>{s}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              {gridLoading ? (
+                <div className="flex items-center justify-center py-16">
                   <Loader2 className="w-6 h-6 animate-spin text-[#005FB8]" />
                 </div>
               ) : (
-                <div className="space-y-1.5">
-                  <p className="text-xs text-slate-500 mb-2">Archivo: <span className="font-medium text-slate-800">{selectedFile?.name}</span></p>
-                  {sheets.map((s) => (
-                    <button
-                      key={s}
-                      onClick={() => pickSheet(s)}
-                      className="w-full flex items-center gap-3 p-3 rounded-lg border border-slate-200 hover:border-[#005FB8] hover:bg-[#005FB8]/5 transition-all text-left"
-                      data-testid={`sheet-${s}`}
-                    >
-                      <div className="w-8 h-8 bg-slate-100 rounded-md flex items-center justify-center text-xs font-mono">
-                        #{sheets.indexOf(s) + 1}
-                      </div>
-                      <div className="flex-1">
-                        <p className="text-sm font-medium">{s}</p>
-                      </div>
-                      <ChevronRight className="w-4 h-4 text-slate-400" />
-                    </button>
-                  ))}
+                <div className="flex-1 overflow-auto">
+                  <SheetGridPicker
+                    grid={grid}
+                    headerRow={headerRow}
+                    firstCol={firstCol}
+                    onSelect={({ headerRow: h, firstCol: c }) => {
+                      setHeaderRow(h);
+                      setFirstCol(c);
+                    }}
+                  />
                 </div>
               )}
             </div>
           )}
 
+          {/* Step 3: columns */}
           {step === 3 && (
             <ScrollArea className="flex-1 thin-scroll">
               <div className="space-y-4 py-2 pr-2">
@@ -267,49 +288,6 @@ export default function CreateMapDialog({ open, onOpenChange, onCreated }) {
                   <Input value={name} onChange={(e) => setName(e.target.value)} data-testid="map-name-input" />
                 </div>
 
-                {/* Data range */}
-                <div className="border border-slate-200 rounded-lg p-4 bg-slate-50/50 space-y-3">
-                  <div className="flex items-center gap-2">
-                    <SlidersHorizontal className="w-4 h-4 text-[#005FB8]" />
-                    <Label className="text-xs font-semibold uppercase tracking-wider text-slate-700">Rango de datos</Label>
-                  </div>
-                  <p className="text-xs text-slate-500 -mt-1">Delimita desde dónde comienzan los datos en tu Excel.</p>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <Label className="text-[10px] uppercase text-slate-400 mb-1 block">Fila de encabezados</Label>
-                      <Input
-                        type="number"
-                        min={1}
-                        value={headerRow}
-                        onChange={(e) => setHeaderRow(e.target.value)}
-                        data-testid="header-row-input-create"
-                      />
-                    </div>
-                    <div>
-                      <Label className="text-[10px] uppercase text-slate-400 mb-1 block">Primera columna</Label>
-                      <Input
-                        type="number"
-                        min={1}
-                        value={firstCol}
-                        onChange={(e) => setFirstCol(e.target.value)}
-                        data-testid="first-col-input-create"
-                      />
-                    </div>
-                  </div>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="w-full h-8 text-xs"
-                    onClick={reloadWithRange}
-                    disabled={sheetLoading}
-                    data-testid="apply-range-create-btn"
-                  >
-                    {sheetLoading ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : null}
-                    Recargar columnas con este rango
-                  </Button>
-                </div>
-
-                {/* Coord columns */}
                 <div className="border border-slate-200 rounded-lg p-4 bg-slate-50/50 space-y-3">
                   <div className="flex items-center gap-2">
                     <MapPin className="w-4 h-4 text-[#005FB8]" />
@@ -353,13 +331,12 @@ export default function CreateMapDialog({ open, onOpenChange, onCreated }) {
                   )}
                 </div>
 
-                {/* Status column */}
                 <div className="border border-slate-200 rounded-lg p-4 bg-slate-50/50 space-y-2">
                   <div className="flex items-center gap-2">
                     <Filter className="w-4 h-4 text-[#005FB8]" />
                     <Label className="text-xs font-semibold uppercase tracking-wider text-slate-700">Columna de estado (opcional)</Label>
                   </div>
-                  <p className="text-xs text-slate-500 -mt-1">Podrás usarla después para filtrar cuáles marcadores se ven normales y cuáles tenues.</p>
+                  <p className="text-xs text-slate-500 -mt-1">Para filtrar cuáles marcadores se ven normales y cuáles tenues.</p>
                   <Select value={statusCol} onValueChange={setStatusCol}>
                     <SelectTrigger data-testid="status-col-select-create"><SelectValue /></SelectTrigger>
                     <SelectContent>
@@ -371,16 +348,10 @@ export default function CreateMapDialog({ open, onOpenChange, onCreated }) {
                   </Select>
                 </div>
 
-                {/* Visible columns */}
                 <div>
                   <div className="flex items-center justify-between mb-2">
                     <Label className="text-xs font-semibold uppercase tracking-wider text-slate-500">Columnas visibles en el marcador</Label>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-6 text-xs"
-                      onClick={() => setVisibleCols(displayCols)}
-                    >
+                    <Button variant="ghost" size="sm" className="h-6 text-xs" onClick={() => setVisibleCols(displayCols)}>
                       Todas
                     </Button>
                   </div>
@@ -419,6 +390,18 @@ export default function CreateMapDialog({ open, onOpenChange, onCreated }) {
             <Button variant="outline" size="sm" onClick={() => onOpenChange(false)} data-testid="cancel-create-btn">
               Cancelar
             </Button>
+            {step === 2 && (
+              <Button
+                onClick={goToStep3}
+                disabled={!selectedSheet || gridLoading || loadingHeaders}
+                size="sm"
+                className="bg-[#005FB8] hover:bg-[#004A94]"
+                data-testid="next-to-columns-btn"
+              >
+                {loadingHeaders && <Loader2 className="w-4 h-4 mr-1 animate-spin" />}
+                Continuar
+              </Button>
+            )}
             {step === 3 && (
               <Button
                 onClick={handleCreate}

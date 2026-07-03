@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import axios from "axios";
 import MapView from "@/components/MapView";
-import { Loader2, MapPin, AlertTriangle } from "lucide-react";
+import { Loader2, MapPin, AlertTriangle, Navigation } from "lucide-react";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -97,6 +97,16 @@ export default function PublicMapPage() {
                 </div>
               ))}
             </div>
+            <button
+              onClick={() => {
+                const url = `https://www.google.com/maps/dir/?api=1&destination=${selectedPoint.lat},${selectedPoint.lng}&travelmode=driving`;
+                window.open(url, "_blank", "noopener,noreferrer");
+              }}
+              className="mt-3 w-full flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-medium py-2 rounded-md transition-colors"
+              data-testid="public-directions-btn"
+            >
+              <Navigation className="w-3.5 h-3.5" /> Cómo llegar en Google Maps
+            </button>
           </div>
         )}
       </div>

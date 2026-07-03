@@ -231,10 +231,22 @@ export default function ControlPanel({ mapData, loading, onUpdateColumns, onUpda
               </SelectContent>
             </Select>
 
-            {statusCol && statusValues.length > 0 && (
+            {statusCol && (statusValues.length > 0 || mapData?.status_has_empty) && (
               <div className="mt-2">
                 <p className="text-[10px] uppercase text-slate-400 mb-1">Valores visibles (los demás quedan tenues)</p>
-                <div className="border border-slate-200 rounded-md p-1 max-h-[140px] overflow-auto thin-scroll">
+                <div className="border border-slate-200 rounded-md p-1 max-h-[160px] overflow-auto thin-scroll">
+                  {mapData?.status_has_empty && (
+                    <label
+                      className="flex items-center gap-2 px-2 py-1 rounded hover:bg-slate-50 cursor-pointer border-b border-slate-100 mb-1"
+                    >
+                      <Checkbox
+                        checked={statusVisibleSet.has("__EMPTY__")}
+                        onCheckedChange={() => toggleStatusValue("__EMPTY__")}
+                        data-testid="status-val-empty"
+                      />
+                      <span className="text-xs italic text-slate-500">(vacío / sin valor)</span>
+                    </label>
+                  )}
                   {statusValues.map((v) => (
                     <label
                       key={v}

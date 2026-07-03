@@ -12,7 +12,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { MapPin, RotateCcw, Save, X } from "lucide-react";
+import { MapPin, RotateCcw, Save, X, Navigation } from "lucide-react";
 
 export default function EditPointSheet({ point, headers, latColumn, lngColumn, onClose, onSave, onReset }) {
   const [draft, setDraft] = useState({});
@@ -67,6 +67,18 @@ export default function EditPointSheet({ point, headers, latColumn, lngColumn, o
               {lngColumn}: {point.lng?.toFixed(6)}
             </span>
           </div>
+          <Button
+            variant="outline"
+            size="sm"
+            className="w-full mt-2 border-emerald-300 text-emerald-700 hover:bg-emerald-50"
+            onClick={() => {
+              const url = `https://www.google.com/maps/dir/?api=1&destination=${point.lat},${point.lng}&travelmode=driving`;
+              window.open(url, "_blank", "noopener,noreferrer");
+            }}
+            data-testid="directions-btn"
+          >
+            <Navigation className="w-4 h-4 mr-2" /> Cómo llegar (Google Maps)
+          </Button>
         </SheetHeader>
 
         <ScrollArea className="flex-1 thin-scroll">
