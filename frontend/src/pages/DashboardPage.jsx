@@ -10,7 +10,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Map as MapIcon, LogOut, ChevronDown, Plus, Share2 } from "lucide-react";
+import { Map as MapIcon, LogOut, ChevronDown, Plus, Share2, UserCog } from "lucide-react";
 import ControlPanel from "@/components/ControlPanel";
 import MapView from "@/components/MapView";
 import EditPointSheet from "@/components/EditPointSheet";
@@ -72,6 +72,19 @@ export default function DashboardPage() {
     localStorage.removeItem("session_id");
     localStorage.removeItem("user");
     window.location.href = "/login";
+  };
+
+  const handleSwitchAccount = async () => {
+    try { await api.post("/auth/logout"); } catch (e) { /* ignore */ }
+    localStorage.removeItem("session_id");
+    localStorage.removeItem("user");
+    try {
+      const res = await api.get("/auth/microsoft/url", { params: { prompt: "select_account" } });
+      window.location.href = res.data.url;
+    } catch (e) {
+      toast.error("No se pudo iniciar el cambio de cuenta");
+      window.location.href = "/login";
+    }
   };
 
   const handleMapCreated = (newMap) => {
@@ -171,10 +184,13 @@ export default function DashboardPage() {
           <div className="w-8 h-8 bg-[#005FB8] rounded-md flex items-center justify-center">
             <MapIcon className="w-4 h-4 text-white" strokeWidth={2.5} />
           </div>
-          <span className="font-heading font-bold tracking-tight">CartoSheet</span>
+          <span className="font-heading font-bold tracking-tight">S.R.Pathfinder</span>
           <span className="text-xs text-slate-400 font-mono ml-2 hidden md:inline">/ {activeMap?.name || "sin mapa activo"}</span>
           {activeMap?.is_public && (
             <span className="text-[10px] font-semibold bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full uppercase tracking-wide">Público</span>
+          )}
+          {activeMap && !activeMap.is_owner && (
+            <span className="text-[10px] font-semibold bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full uppercase tracking-wide" data-testid="editor-badge">Editor</span>
           )}
         </div>
 
@@ -209,7 +225,7 @@ export default function DashboardPage() {
               <DropdownMenuItem onClick={() => setCreateOpen(true)} className="cursor-pointer" data-testid="new-map-menu-btn">
                 <Plus className="w-4 h-4 mr-2" /> Nuevo mapa
               </DropdownMenuItem>
-              {activeMap && (
+              {activeMap && activeMap.is_owner && (
                 <DropdownMenuItem
                   onClick={() => handleDeleteMap(activeMap.id)}
                   className="text-rose-600 cursor-pointer"
@@ -252,6 +268,9 @@ export default function DashboardPage() {
                 <div className="text-xs text-slate-500 font-normal">{user?.email}</div>
               </DropdownMenuLabel>
               <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={handleSwitchAccount} className="cursor-pointer" data-testid="switch-account-btn">
+                <UserCog className="w-4 h-4 mr-2" /> Cambiar cuenta
+              </DropdownMenuItem>
               <DropdownMenuItem onClick={handleLogout} className="cursor-pointer text-rose-600" data-testid="logout-btn">
                 <LogOut className="w-4 h-4 mr-2" /> Cerrar sesión
               </DropdownMenuItem>

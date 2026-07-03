@@ -130,7 +130,7 @@ class PointEdit(BaseModel):
 # ============ Auth ============
 
 @api_router.get("/auth/microsoft/url")
-async def microsoft_auth_url():
+async def microsoft_auth_url(prompt: Optional[str] = None):
     state = str(uuid.uuid4())
     await db.oauth_states.insert_one({"state": state, "created_at": now_iso()})
     url = (
@@ -142,6 +142,9 @@ async def microsoft_auth_url():
         f"&scope={SCOPES}"
         f"&state={state}"
     )
+    # prompt can be: login, select_account, consent, none
+    if prompt in ("login", "select_account", "consent", "none"):
+        url += f"&prompt={prompt}"
     return {"url": url, "state": state}
 
 
@@ -414,13 +417,49 @@ async def sheet_data(
 
 # ============ Maps CRUD ============
 
+def _norm_email(e: Optional[str]) -> Optional[str]:
+    return (e or "").strip().lower() or None
+
+
+async def _get_editable_map(map_id: str, session: dict) -> dict:
+    """Return the map if session user is owner OR editor. Raises 404 otherwise."""
+    user_id = session["user_id"]
+    email = _norm_email(session.get("email"))
+    query = {"id": map_id, "$or": [{"user_id": user_id}]}
+    if email:
+        query["$or"].append({"editor_emails": email})
+    m = await db.maps.find_one(query)
+    if not m:
+        raise HTTPException(status_code=404, detail="Map not found")
+    return m
+
+
+async def _get_owned_map(map_id: str, session: dict) -> dict:
+    """Return the map only if session user is the owner. Raises 404 otherwise."""
+    m = await db.maps.find_one({"id": map_id, "user_id": session["user_id"]})
+    if not m:
+        raise HTTPException(status_code=404, detail="Map not found or not owned by you")
+    return m
+
+
+def _decorate_map(m: dict, session: dict) -> dict:
+    """Add computed fields (is_owner) to map response."""
+    m.pop("_id", None)
+    m["is_owner"] = m.get("user_id") == session["user_id"]
+    return m
+
+
 @api_router.post("/maps")
 async def create_map(payload: MapCreate, x_session_id: str = Header(...)):
     s = await get_session(x_session_id)
     map_id = str(uuid.uuid4())
+    owner_email = _norm_email(s.get("email"))
     doc = {
         "id": map_id,
         "user_id": s["user_id"],
+        "owner_email": owner_email,
+        "owner_display_name": s.get("display_name"),
+        "editor_emails": [],
         "name": payload.name,
         "file_id": payload.file_id,
         "file_name": payload.file_name,
@@ -442,74 +481,71 @@ async def create_map(payload: MapCreate, x_session_id: str = Header(...)):
         "updated_at": now_iso(),
     }
     await db.maps.insert_one(doc)
-    doc.pop("_id", None)
-    return doc
+    return _decorate_map(doc, s)
 
 
 @api_router.get("/maps")
 async def list_maps(x_session_id: str = Header(...)):
     s = await get_session(x_session_id)
-    items = await db.maps.find({"user_id": s["user_id"]}, {"_id": 0}).sort("created_at", -1).to_list(500)
+    email = _norm_email(s.get("email"))
+    query = {"$or": [{"user_id": s["user_id"]}]}
+    if email:
+        query["$or"].append({"editor_emails": email})
+    items = await db.maps.find(query, {"_id": 0}).sort("created_at", -1).to_list(500)
+    for m in items:
+        m["is_owner"] = m.get("user_id") == s["user_id"]
     return {"maps": items}
 
 
 @api_router.get("/maps/{map_id}")
 async def get_map(map_id: str, x_session_id: str = Header(...)):
     s = await get_session(x_session_id)
-    m = await db.maps.find_one({"id": map_id, "user_id": s["user_id"]}, {"_id": 0})
-    if not m:
-        raise HTTPException(status_code=404, detail="Map not found")
-    return m
+    m = await _get_editable_map(map_id, s)
+    return _decorate_map(m, s)
 
 
 @api_router.patch("/maps/{map_id}")
 async def update_map(map_id: str, payload: MapUpdate, x_session_id: str = Header(...)):
     s = await get_session(x_session_id)
+    m = await _get_editable_map(map_id, s)
     updates = {k: v for k, v in payload.model_dump(exclude_none=True).items()}
     if not updates:
         raise HTTPException(status_code=400, detail="No updates")
     updates["updated_at"] = now_iso()
-    res = await db.maps.update_one({"id": map_id, "user_id": s["user_id"]}, {"$set": updates})
-    if res.matched_count == 0:
-        raise HTTPException(status_code=404, detail="Map not found")
+    await db.maps.update_one({"id": map_id}, {"$set": updates})
     m = await db.maps.find_one({"id": map_id}, {"_id": 0})
-    return m
+    return _decorate_map(m, s)
 
 
 @api_router.delete("/maps/{map_id}")
 async def delete_map(map_id: str, x_session_id: str = Header(...)):
     s = await get_session(x_session_id)
-    res = await db.maps.delete_one({"id": map_id, "user_id": s["user_id"]})
-    if res.deleted_count == 0:
-        raise HTTPException(status_code=404, detail="Map not found")
+    await _get_owned_map(map_id, s)
+    await db.maps.delete_one({"id": map_id})
     return {"ok": True}
 
 
 @api_router.put("/maps/{map_id}/points/{row_index}")
 async def update_point(map_id: str, row_index: int, payload: PointEdit, x_session_id: str = Header(...)):
     s = await get_session(x_session_id)
-    m = await db.maps.find_one({"id": map_id, "user_id": s["user_id"]})
-    if not m:
-        raise HTTPException(status_code=404, detail="Map not found")
+    await _get_editable_map(map_id, s)
     key = f"point_overrides.{row_index}"
     await db.maps.update_one(
         {"id": map_id},
         {"$set": {key: payload.overrides, "updated_at": now_iso()}},
     )
     updated = await db.maps.find_one({"id": map_id}, {"_id": 0})
-    return updated
+    return _decorate_map(updated, s)
 
 
 @api_router.delete("/maps/{map_id}/points/{row_index}")
 async def reset_point(map_id: str, row_index: int, x_session_id: str = Header(...)):
     s = await get_session(x_session_id)
-    m = await db.maps.find_one({"id": map_id, "user_id": s["user_id"]})
-    if not m:
-        raise HTTPException(status_code=404, detail="Map not found")
+    await _get_editable_map(map_id, s)
     key = f"point_overrides.{row_index}"
     await db.maps.update_one({"id": map_id}, {"$unset": {key: ""}, "$set": {"updated_at": now_iso()}})
     updated = await db.maps.find_one({"id": map_id}, {"_id": 0})
-    return updated
+    return _decorate_map(updated, s)
 
 
 def _build_map_rows(headers, data_rows, m):
@@ -580,10 +616,22 @@ def _build_map_rows(headers, data_rows, m):
 async def map_data(map_id: str, x_session_id: str = Header(...)):
     """Combine map config with live Excel data + overrides applied."""
     s = await get_session(x_session_id)
-    m = await db.maps.find_one({"id": map_id, "user_id": s["user_id"]}, {"_id": 0})
-    if not m:
-        raise HTTPException(status_code=404, detail="Map not found")
-    wb = await _load_workbook(s, m["file_id"])
+    m = await _get_editable_map(map_id, s)
+    m.pop("_id", None)
+    # Use owner's session to fetch the Excel — editors don't have access to owner's OneDrive.
+    if m.get("user_id") != s["user_id"]:
+        owner_session = await db.sessions.find_one(
+            {"user_id": m.get("user_id")}, sort=[("updated_at", -1)]
+        )
+        if not owner_session:
+            raise HTTPException(
+                status_code=409,
+                detail="El dueño del mapa debe iniciar sesión al menos una vez para que puedas ver los datos actualizados.",
+            )
+        graph_session = owner_session
+    else:
+        graph_session = s
+    wb = await _load_workbook(graph_session, m["file_id"])
     if m["sheet_name"] not in wb.sheetnames:
         raise HTTPException(status_code=404, detail="Sheet no longer exists in workbook")
     ws = wb[m["sheet_name"]]
@@ -622,7 +670,7 @@ async def map_data(map_id: str, x_session_id: str = Header(...)):
                 status_values.append(s_val)
 
     return {
-        "map": m,
+        "map": _decorate_map(m, s),
         "headers": headers,
         "lat_column": lat_col,
         "lng_column": lng_col,
@@ -633,29 +681,74 @@ async def map_data(map_id: str, x_session_id: str = Header(...)):
     }
 
 
+# ============ Editors (collaboration) ============
+
+class EditorAdd(BaseModel):
+    email: str
+
+
+@api_router.get("/maps/{map_id}/editors")
+async def list_editors(map_id: str, x_session_id: str = Header(...)):
+    s = await get_session(x_session_id)
+    m = await _get_editable_map(map_id, s)
+    return {
+        "owner_email": m.get("owner_email"),
+        "owner_display_name": m.get("owner_display_name"),
+        "editors": m.get("editor_emails") or [],
+        "is_owner": m.get("user_id") == s["user_id"],
+    }
+
+
+@api_router.post("/maps/{map_id}/editors")
+async def add_editor(map_id: str, payload: EditorAdd, x_session_id: str = Header(...)):
+    s = await get_session(x_session_id)
+    m = await _get_owned_map(map_id, s)
+    email = _norm_email(payload.email)
+    if not email or "@" not in email:
+        raise HTTPException(status_code=400, detail="Email inválido")
+    if email == _norm_email(m.get("owner_email")):
+        raise HTTPException(status_code=400, detail="El dueño ya tiene acceso")
+    current = set(m.get("editor_emails") or [])
+    current.add(email)
+    await db.maps.update_one(
+        {"id": map_id},
+        {"$set": {"editor_emails": sorted(current), "updated_at": now_iso()}},
+    )
+    return {"editors": sorted(current)}
+
+
+@api_router.delete("/maps/{map_id}/editors/{email}")
+async def remove_editor(map_id: str, email: str, x_session_id: str = Header(...)):
+    s = await get_session(x_session_id)
+    m = await _get_owned_map(map_id, s)
+    normalized = _norm_email(email)
+    current = [e for e in (m.get("editor_emails") or []) if e != normalized]
+    await db.maps.update_one(
+        {"id": map_id},
+        {"$set": {"editor_emails": current, "updated_at": now_iso()}},
+    )
+    return {"editors": current}
+
+
 # ============ Share / Public ============
 
 @api_router.post("/maps/{map_id}/share")
 async def enable_share(map_id: str, x_session_id: str = Header(...)):
     s = await get_session(x_session_id)
-    m = await db.maps.find_one({"id": map_id, "user_id": s["user_id"]})
-    if not m:
-        raise HTTPException(status_code=404, detail="Map not found")
+    m = await _get_owned_map(map_id, s)
     token = m.get("share_token") or uuid.uuid4().hex
     await db.maps.update_one(
         {"id": map_id},
         {"$set": {"is_public": True, "share_token": token, "updated_at": now_iso()}},
     )
     updated = await db.maps.find_one({"id": map_id}, {"_id": 0})
-    return {"share_token": token, "is_public": True, "map": updated}
+    return {"share_token": token, "is_public": True, "map": _decorate_map(updated, s)}
 
 
 @api_router.post("/maps/{map_id}/share/rotate")
 async def rotate_share(map_id: str, x_session_id: str = Header(...)):
     s = await get_session(x_session_id)
-    m = await db.maps.find_one({"id": map_id, "user_id": s["user_id"]})
-    if not m:
-        raise HTTPException(status_code=404, detail="Map not found")
+    await _get_owned_map(map_id, s)
     token = uuid.uuid4().hex
     await db.maps.update_one(
         {"id": map_id},
@@ -667,9 +760,7 @@ async def rotate_share(map_id: str, x_session_id: str = Header(...)):
 @api_router.delete("/maps/{map_id}/share")
 async def disable_share(map_id: str, x_session_id: str = Header(...)):
     s = await get_session(x_session_id)
-    m = await db.maps.find_one({"id": map_id, "user_id": s["user_id"]})
-    if not m:
-        raise HTTPException(status_code=404, detail="Map not found")
+    await _get_owned_map(map_id, s)
     await db.maps.update_one(
         {"id": map_id},
         {"$set": {"is_public": False, "updated_at": now_iso()}},

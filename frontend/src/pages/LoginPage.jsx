@@ -31,7 +31,7 @@ export default function LoginPage() {
             <div className="w-9 h-9 bg-[#005FB8] rounded-md flex items-center justify-center">
               <Map className="w-5 h-5 text-white" strokeWidth={2.5} />
             </div>
-            <span className="font-heading font-bold text-xl tracking-tight">CartoSheet</span>
+            <span className="font-heading font-bold text-xl tracking-tight">S.R.Pathfinder</span>
           </div>
 
           <div className="max-w-md">

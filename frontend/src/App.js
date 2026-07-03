@@ -15,7 +15,7 @@ const RequireAuth = ({ children }) => {
 
 function App() {
   useEffect(() => {
-    document.title = "Excel Maps — OneDrive";
+    document.title = "S.R.Pathfinder — OneDrive Maps";
   }, []);
 
   return (

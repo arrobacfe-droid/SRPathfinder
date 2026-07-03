@@ -1,0 +1,64 @@
+{
+  "summary": "Iteration 6: verified collaboration features (owner_email/editor_emails, is_owner flag, /maps/{id}/editors endpoints, share endpoints restricted to owner) plus prompt param on /auth/microsoft/url. 34 new tests, all 87 backend tests pass (53 regression + 34 new).",
+  "tested_scope": ["backend"],
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "feature_verification": {
+    "endpoints_covered": [
+      "GET /api/auth/microsoft/url?prompt=... — accepts login/select_account/consent/none; ignores invalid/empty values",
+      "POST /api/maps — stores owner_email (lowercased), owner_display_name, editor_emails=[], returns is_owner=true",
+      "GET /api/maps — is_owner=true for owner, includes shared maps for editor with is_owner=false, hidden from strangers",
+      "GET /api/maps/{id} — returns is_owner correctly; 404 for strangers",
+      "PATCH /api/maps/{id} — editor can update; stranger → 404",
+      "DELETE /api/maps/{id} — owner only; editor → 404 'Map not found or not owned by you'",
+      "PUT/DELETE /api/maps/{id}/points/{row} — editor allowed; stranger → 404",
+      "GET /api/maps/{id}/editors — owner + editor allowed; stranger → 404",
+      "POST /api/maps/{id}/editors — owner only; lowercase normalization + set dedup; invalid email → 400; owner-as-editor → 400",
+      "DELETE /api/maps/{id}/editors/{email} — owner only; nonexistent email is a no-op (returns list)",
+      "POST /api/maps/{id}/share, /share/rotate, DELETE /share — all owner-only; editor → 404",
+      "Legacy map (no owner_email/editor_emails fields) — is_owner still derived correctly from user_id"
+    ]
+  },
+  "passed": [
+    "TestPromptParam: 7 tests (no_prompt, 4 valid values, invalid ignored, empty ignored)",
+    "TestCreateMapOwnerFields: owner_email lowercased, owner_display_name, editor_emails=[], is_owner=true",
+    "TestAccessControl: 4 tests (list is_owner, editor hidden pre-add, editor 404 pre-add, stranger 404)",
+    "TestEditorsEndpoints: 8 tests (lowercase+dedup, invalid email 400, self-add 400, editor list, editor cannot add, stranger 404, delete owner-only, delete-missing no-op)",
+    "TestEditorPrivileges: 9 tests (list is_owner=false, GET is_owner, patch, stranger patch 404, point put/delete, stranger point 404, editor cannot delete map)",
+    "TestShareEndpointsOwnerOnly: 4 tests (editor 404 on enable/rotate/disable, owner enable OK)",
+    "TestLegacyMapCompat: legacy map is_owner=true via user_id",
+    "Regression: all 53 prior tests still green"
+  ],
+  "failed": [],
+  "test_report_links": [
+    "/app/backend/tests/test_iteration6_collab.py",
+    "/app/backend/tests/test_preview_and_empty_status.py",
+    "/app/backend/tests/test_share_and_status.py",
+    "/app/backend/tests/test_map_columns_config.py",
+    "/app/backend/tests/test_ms_oauth_callback.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py now ~820 lines — the earlier recommendation to split into routers (auth, maps, editors, share, onedrive) is more urgent now with iteration 6 additions.",
+    "add_editor / remove_editor: return payload is inconsistent with list_editors — POST/DELETE returns only {'editors': [...]}, while GET returns {owner_email, owner_display_name, editors, is_owner}. Consider returning the same shape everywhere for frontend simplicity.",
+    "EditorAdd model has email: str with no Pydantic EmailStr validator; manual '@' check misses many malformed cases (e.g., 'a@', '@b', 'a b@c'). Consider using pydantic.EmailStr and email-validator.",
+    "editor_emails is stored as a sorted list on add but as an unsorted filtered list on remove — minor inconsistency, but the frontend may see order changes on remove.",
+    "_get_editable_map builds '$or': [{'user_id': user_id}] and conditionally appends editor_emails clause. When session has no email (edge case), only user_id matches — correct, but the '$or' with a single element is valid MongoDB but semantically noisy. Consider $or only when both clauses exist.",
+    "map_data owner-fallback session lookup (server.py ~623): sort by updated_at desc picks the most recently used session, but if the owner has logged out (session deleted) the editor sees 409. Consider caching a long-lived owner refresh_token separately from sessions so collaborators aren't blocked by owner logout.",
+    "No endpoint to list maps *shared with me* separately from *maps I own* — the list is merged with is_owner flag, which is fine, but the frontend has to filter. Consider adding a query param ?filter=owned|shared.",
+    "editor_emails has no cap — a malicious owner could bloat a map with thousands of editor emails. Consider a soft limit (e.g., 50).",
+    "No audit log for editor add/remove operations. For a collaboration feature, capturing who added whom + when would be valuable.",
+    "The 'El dueño ya tiene acceso' 400 check compares owner_email but doesn't also check if the target email matches the current session's email (i.e., an editor trying to add themselves) — moot because non-owners get 404 first, but worth noting."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration6_collab.py (new, 34 tests)"
+  ],
+  "success_rate": {"backend": "100% (87/87)", "frontend": "not tested (skipped per request)"},
+  "test_credentials": "None. TEST_ prefixed sessions/users injected directly into MongoDB (owner, editor, stranger).",
+  "seed_data_creation": "Module-scoped fixtures owner_session/editor_session/stranger_session insert TEST_ sessions with distinct user_ids and emails. Function-scoped owned_map / shared_map fixtures create+cleanup maps per test. Post-run verification: 0 TEST_ sessions / 0 TEST_ maps remain.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Baseline is now 87 tests (53 pre-existing + 34 iteration 6). Endpoints not e2e testable (need real MS Graph): /onedrive/*, /maps/{id}/data — but map_data's owner-session fallback (server.py ~622) is not exercised. If an integration test for that flow is desired, mock httpx.AsyncClient. Frontend iteration 6 (S.R.Pathfinder rebrand, 'Cambiar cuenta' button, editor management UI) was skipped per request.",
+  "rca_of_the_issue": "N/A — feature verification, no bugs encountered."
+}
