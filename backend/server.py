@@ -1,4 +1,4 @@
-from fastapi import FastAPI, APIRouter, HTTPException, Header, Body
+from fastapi import FastAPI, APIRouter, HTTPException, Header, Body, UploadFile, File
 from fastapi.responses import JSONResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
@@ -112,6 +112,7 @@ class MapCreate(BaseModel):
     status_visible_values: List[str] = []
     data_row_from: Optional[int] = None  # 1-based inclusive first data row
     data_row_to: Optional[int] = None    # 1-based inclusive last data row
+    source: str = "onedrive"  # "onedrive" or "upload"
 
 
 class MapUpdate(BaseModel):
@@ -321,6 +322,107 @@ async def _load_workbook(session: dict, item_id: str) -> openpyxl.Workbook:
     return wb
 
 
+async def _load_uploaded_workbook(upload_id: str) -> openpyxl.Workbook:
+    """Load an .xlsx that was uploaded from device (stored in Mongo)."""
+    doc = await db.uploads.find_one({"id": upload_id}, {"data": 1})
+    if not doc or not doc.get("data"):
+        raise HTTPException(status_code=404, detail="Archivo subido no encontrado")
+    return openpyxl.load_workbook(io.BytesIO(doc["data"]), read_only=True, data_only=True)
+
+
+async def _load_workbook_for_map(m: dict, session: dict) -> openpyxl.Workbook:
+    """Dispatch workbook loading based on the map's source."""
+    if m.get("source") == "upload":
+        return await _load_uploaded_workbook(m["file_id"])
+    return await _load_workbook(session, m["file_id"])
+
+
+# ============ Uploads (files from user's device) ============
+
+MAX_UPLOAD_SIZE = 15 * 1024 * 1024  # 15 MB — BSON limit is 16MB
+
+
+@api_router.post("/uploads/excel")
+async def upload_excel(file: UploadFile = File(...), x_session_id: str = Header(...)):
+    s = await get_session(x_session_id)
+    if not file.filename or not file.filename.lower().endswith(".xlsx"):
+        raise HTTPException(status_code=400, detail="Solo se aceptan archivos .xlsx")
+    data = await file.read()
+    if len(data) == 0:
+        raise HTTPException(status_code=400, detail="El archivo está vacío")
+    if len(data) > MAX_UPLOAD_SIZE:
+        raise HTTPException(status_code=413, detail=f"El archivo excede el límite de {MAX_UPLOAD_SIZE // (1024*1024)} MB")
+    # Validate it's a proper xlsx
+    try:
+        openpyxl.load_workbook(io.BytesIO(data), read_only=True, data_only=True)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Archivo Excel inválido: {e}")
+
+    upload_id = str(uuid.uuid4())
+    await db.uploads.insert_one({
+        "id": upload_id,
+        "user_id": s["user_id"],
+        "filename": file.filename,
+        "content_type": file.content_type or "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "size": len(data),
+        "data": data,
+        "created_at": now_iso(),
+    })
+    return {"id": upload_id, "filename": file.filename, "size": len(data)}
+
+
+@api_router.get("/uploads/files")
+async def list_uploads(x_session_id: str = Header(...)):
+    s = await get_session(x_session_id)
+    items = await db.uploads.find(
+        {"user_id": s["user_id"]},
+        {"_id": 0, "data": 0},
+    ).sort("created_at", -1).to_list(200)
+    return {"files": items}
+
+
+@api_router.delete("/uploads/files/{upload_id}")
+async def delete_upload(upload_id: str, x_session_id: str = Header(...)):
+    s = await get_session(x_session_id)
+    res = await db.uploads.delete_one({"id": upload_id, "user_id": s["user_id"]})
+    if res.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Upload not found")
+    return {"ok": True}
+
+
+@api_router.get("/uploads/files/{upload_id}/sheets")
+async def upload_sheets(upload_id: str, x_session_id: str = Header(...)):
+    await get_session(x_session_id)
+    wb = await _load_uploaded_workbook(upload_id)
+    return {"sheets": wb.sheetnames}
+
+
+@api_router.get("/uploads/files/{upload_id}/sheets/{sheet_name}/preview")
+async def upload_sheet_preview(
+    upload_id: str,
+    sheet_name: str,
+    max_rows: int = 25,
+    max_cols: int = 20,
+    x_session_id: str = Header(...),
+):
+    await get_session(x_session_id)
+    wb = await _load_uploaded_workbook(upload_id)
+    return _grid_preview(wb, sheet_name, max_rows, max_cols)
+
+
+@api_router.get("/uploads/files/{upload_id}/sheets/{sheet_name}/data")
+async def upload_sheet_data(
+    upload_id: str,
+    sheet_name: str,
+    header_row: int = 1,
+    first_col: int = 1,
+    x_session_id: str = Header(...),
+):
+    await get_session(x_session_id)
+    wb = await _load_uploaded_workbook(upload_id)
+    return _read_sheet_data(wb, sheet_name, header_row, first_col)
+
+
 @api_router.get("/onedrive/files/{item_id}/sheets")
 async def list_sheets(item_id: str, x_session_id: str = Header(...)):
     s = await get_session(x_session_id)
@@ -372,6 +474,10 @@ async def sheet_preview(
     where the user clicks a cell to define the data start (header_row, first_col)."""
     s = await get_session(x_session_id)
     wb = await _load_workbook(s, item_id)
+    return _grid_preview(wb, sheet_name, max_rows, max_cols)
+
+
+def _grid_preview(wb, sheet_name: str, max_rows: int, max_cols: int):
     if sheet_name not in wb.sheetnames:
         raise HTTPException(status_code=404, detail="Sheet not found")
     ws = wb[sheet_name]
@@ -382,14 +488,12 @@ async def sheet_preview(
             if isinstance(v, datetime):
                 v = v.isoformat()
             row_cells.append(v)
-        # Pad row to max_cols with None
         while len(row_cells) < max_cols:
             row_cells.append(None)
         grid.append(row_cells)
         if len(grid) >= max_rows:
             break
 
-    # Auto-detect: find first row that has 3+ non-empty text cells → likely header row
     suggested_header_row = 1
     suggested_first_col = 1
     for r_idx, row in enumerate(grid):
@@ -421,6 +525,10 @@ async def sheet_data(
 ):
     s = await get_session(x_session_id)
     wb = await _load_workbook(s, item_id)
+    return _read_sheet_data(wb, sheet_name, header_row, first_col)
+
+
+def _read_sheet_data(wb, sheet_name: str, header_row: int, first_col: int):
     if sheet_name not in wb.sheetnames:
         raise HTTPException(status_code=404, detail="Sheet not found")
     ws = wb[sheet_name]
@@ -498,6 +606,7 @@ async def create_map(payload: MapCreate, x_session_id: str = Header(...)):
         "owner_display_name": s.get("display_name"),
         "editor_emails": [],
         "name": payload.name,
+        "source": payload.source or "onedrive",
         "file_id": payload.file_id,
         "file_name": payload.file_name,
         "sheet_name": payload.sheet_name,
@@ -667,7 +776,10 @@ async def map_data(map_id: str, x_session_id: str = Header(...)):
     m = await _get_editable_map(map_id, s)
     m.pop("_id", None)
     # Use owner's session to fetch the Excel — editors don't have access to owner's OneDrive.
-    if m.get("user_id") != s["user_id"]:
+    if m.get("source") == "upload":
+        # Uploaded files don't need MS Graph at all
+        graph_session = s
+    elif m.get("user_id") != s["user_id"]:
         owner_session = await db.sessions.find_one(
             {"user_id": m.get("user_id")}, sort=[("updated_at", -1)]
         )
@@ -679,7 +791,7 @@ async def map_data(map_id: str, x_session_id: str = Header(...)):
         graph_session = owner_session
     else:
         graph_session = s
-    wb = await _load_workbook(graph_session, m["file_id"])
+    wb = await _load_workbook_for_map(m, graph_session)
     if m["sheet_name"] not in wb.sheetnames:
         raise HTTPException(status_code=404, detail="Sheet no longer exists in workbook")
     ws = wb[m["sheet_name"]]

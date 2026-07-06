@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import {
   Dialog,
   DialogContent,
@@ -19,6 +19,7 @@ import {
 } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
   FileSpreadsheet,
   Loader2,
@@ -27,6 +28,10 @@ import {
   Info,
   Filter,
   SlidersHorizontal,
+  UploadCloud,
+  Trash2,
+  Cloud,
+  HardDrive,
 } from "lucide-react";
 import api from "@/lib/api";
 import { toast } from "sonner";
@@ -34,18 +39,26 @@ import SheetGridPicker from "@/components/SheetGridPicker";
 
 export default function CreateMapDialog({ open, onOpenChange, onCreated }) {
   const [step, setStep] = useState(1);
-  // Step 1
-  const [files, setFiles] = useState([]);
-  const [filesLoading, setFilesLoading] = useState(false);
+  const [source, setSource] = useState("onedrive"); // "onedrive" or "upload"
+
+  // Step 1 - OneDrive
+  const [odFiles, setOdFiles] = useState([]);
+  const [odLoading, setOdLoading] = useState(false);
+  // Step 1 - Uploads
+  const [upFiles, setUpFiles] = useState([]);
+  const [upLoading, setUpLoading] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const fileInputRef = useRef(null);
+
   const [selectedFile, setSelectedFile] = useState(null);
-  // Step 2 (sheet + range picker)
+  // Step 2
   const [sheets, setSheets] = useState([]);
   const [selectedSheet, setSelectedSheet] = useState("");
   const [grid, setGrid] = useState([]);
   const [gridLoading, setGridLoading] = useState(false);
   const [headerRow, setHeaderRow] = useState(1);
   const [firstCol, setFirstCol] = useState(1);
-  // Step 3 (columns)
+  // Step 3
   const [headers, setHeaders] = useState([]);
   const [sampleRows, setSampleRows] = useState([]);
   const [latCol, setLatCol] = useState("");
@@ -59,10 +72,13 @@ export default function CreateMapDialog({ open, onOpenChange, onCreated }) {
   const [loadingHeaders, setLoadingHeaders] = useState(false);
   const [saving, setSaving] = useState(false);
 
+  const basePath = source === "upload" ? "/uploads/files" : "/onedrive/files";
+
   useEffect(() => {
     if (!open) {
       setTimeout(() => {
         setStep(1);
+        setSource("onedrive");
         setSelectedFile(null);
         setSheets([]);
         setSelectedSheet("");
@@ -82,45 +98,93 @@ export default function CreateMapDialog({ open, onOpenChange, onCreated }) {
       }, 200);
       return;
     }
-    loadFiles();
+    loadOneDrive();
+    loadUploads();
   }, [open]);
 
-  const loadFiles = async () => {
-    setFilesLoading(true);
+  const loadOneDrive = async () => {
+    setOdLoading(true);
     try {
       const res = await api.get("/onedrive/files");
-      setFiles(res.data.files);
+      setOdFiles(res.data.files || []);
     } catch (e) {
-      toast.error(e.response?.data?.detail || "No se pudieron cargar los archivos de OneDrive");
+      // Non-blocking: user can still use upload
+      setOdFiles([]);
     } finally {
-      setFilesLoading(false);
+      setOdLoading(false);
     }
   };
 
-  const pickFile = async (file) => {
-    setSelectedFile(file);
-    setFilesLoading(true);
+  const loadUploads = async () => {
+    setUpLoading(true);
     try {
-      const res = await api.get(`/onedrive/files/${file.id}/sheets`);
+      const res = await api.get("/uploads/files");
+      setUpFiles(res.data.files || []);
+    } catch (e) {
+      setUpFiles([]);
+    } finally {
+      setUpLoading(false);
+    }
+  };
+
+  const handleFileUpload = async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    if (!file.name.toLowerCase().endsWith(".xlsx")) {
+      toast.error("Solo se aceptan archivos .xlsx");
+      return;
+    }
+    if (file.size > 15 * 1024 * 1024) {
+      toast.error("Archivo demasiado grande (máx. 15 MB)");
+      return;
+    }
+    setUploading(true);
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      const res = await api.post("/uploads/excel", formData, {
+        headers: { "Content-Type": "multipart/form-data" },
+      });
+      toast.success(`${res.data.filename} subido`);
+      await loadUploads();
+      // Auto-select the freshly uploaded file
+      pickFile({ ...res.data, name: res.data.filename }, "upload");
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Error al subir");
+    } finally {
+      setUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
+
+  const pickFile = async (file, src) => {
+    const chosenSource = src || source;
+    setSource(chosenSource);
+    setSelectedFile(file);
+    setGridLoading(true);
+    try {
+      const path = chosenSource === "upload" ? "/uploads/files" : "/onedrive/files";
+      const res = await api.get(`${path}/${file.id}/sheets`);
       setSheets(res.data.sheets);
-      // Auto-pick first sheet
       if (res.data.sheets.length > 0) {
-        await pickSheet(file.id, res.data.sheets[0]);
+        await pickSheet(file.id, res.data.sheets[0], chosenSource);
       }
       setStep(2);
     } catch (e) {
       toast.error("Error leyendo hojas del Excel");
     } finally {
-      setFilesLoading(false);
+      setGridLoading(false);
     }
   };
 
-  const pickSheet = async (fileId, sheetName) => {
+  const pickSheet = async (fileId, sheetName, src) => {
+    const chosenSource = src || source;
     setSelectedSheet(sheetName);
     setGridLoading(true);
     try {
+      const path = chosenSource === "upload" ? "/uploads/files" : "/onedrive/files";
       const res = await api.get(
-        `/onedrive/files/${fileId}/sheets/${encodeURIComponent(sheetName)}/preview`,
+        `${path}/${fileId}/sheets/${encodeURIComponent(sheetName)}/preview`,
         { params: { max_rows: 30, max_cols: 20 } }
       );
       setGrid(res.data.grid);
@@ -142,7 +206,7 @@ export default function CreateMapDialog({ open, onOpenChange, onCreated }) {
     setLoadingHeaders(true);
     try {
       const res = await api.get(
-        `/onedrive/files/${selectedFile.id}/sheets/${encodeURIComponent(selectedSheet)}/data`,
+        `${basePath}/${selectedFile.id}/sheets/${encodeURIComponent(selectedSheet)}/data`,
         { params: { header_row: headerRow, first_col: firstCol } }
       );
       setHeaders(res.data.headers);
@@ -154,7 +218,8 @@ export default function CreateMapDialog({ open, onOpenChange, onCreated }) {
         (h) => h !== res.data.suggested_lat_column && h !== res.data.suggested_lng_column
       );
       setVisibleCols(auto.slice(0, Math.min(4, auto.length)));
-      if (!name) setName(`${selectedFile.name.replace(/\.xlsx$/i, "")} · ${selectedSheet}`);
+      const fname = selectedFile.name || selectedFile.filename || "";
+      if (!name) setName(`${fname.replace(/\.xlsx$/i, "")} · ${selectedSheet}`);
       setStep(3);
     } catch (e) {
       toast.error(e.response?.data?.detail || "No se pudieron leer las columnas con este rango. Selecciona una celda diferente en la vista.");
@@ -178,10 +243,12 @@ export default function CreateMapDialog({ open, onOpenChange, onCreated }) {
     }
     setSaving(true);
     try {
+      const fname = selectedFile.name || selectedFile.filename || "archivo.xlsx";
       const res = await api.post("/maps", {
         name: name.trim() || `Mapa ${selectedSheet}`,
+        source,
         file_id: selectedFile.id,
-        file_name: selectedFile.name,
+        file_name: fname,
         sheet_name: selectedSheet,
         lat_column: latCol,
         lng_column: lngCol,
@@ -190,6 +257,8 @@ export default function CreateMapDialog({ open, onOpenChange, onCreated }) {
         first_col: Math.max(1, Number(firstCol) || 1),
         status_column: statusCol === "__none__" ? null : statusCol,
         status_visible_values: [],
+        data_row_from: rowFrom === "" ? null : Math.max(1, Number(rowFrom) || 1),
+        data_row_to: rowTo === "" ? null : Math.max(1, Number(rowTo) || 1),
       });
       toast.success("Mapa creado");
       onCreated(res.data);
@@ -197,6 +266,18 @@ export default function CreateMapDialog({ open, onOpenChange, onCreated }) {
       toast.error(e.response?.data?.detail || "Error al crear mapa");
     } finally {
       setSaving(false);
+    }
+  };
+
+  const deleteUpload = async (id, e) => {
+    e.stopPropagation();
+    if (!window.confirm("¿Eliminar este archivo subido? Los mapas creados desde él dejarán de funcionar.")) return;
+    try {
+      await api.delete(`/uploads/files/${id}`);
+      toast.success("Archivo eliminado");
+      loadUploads();
+    } catch (err) {
+      toast.error("Error al eliminar");
     }
   };
 
@@ -208,7 +289,7 @@ export default function CreateMapDialog({ open, onOpenChange, onCreated }) {
         <DialogHeader className="p-6 pb-3">
           <DialogTitle className="font-heading text-xl">Nuevo mapa desde Excel</DialogTitle>
           <DialogDescription className="text-xs">
-            Paso {step} de 3 · {step === 1 ? "Elige un archivo .xlsx" : step === 2 ? "Selecciona hoja y rango de datos" : "Configura columnas"}
+            Paso {step} de 3 · {step === 1 ? "Elige el origen del archivo" : step === 2 ? "Selecciona hoja y rango de datos" : "Configura columnas"}
           </DialogDescription>
 
           <div className="flex items-center gap-1 pt-3">
@@ -218,39 +299,140 @@ export default function CreateMapDialog({ open, onOpenChange, onCreated }) {
           </div>
         </DialogHeader>
 
-        <div className="px-6 pb-2 min-h-[380px] max-h-[70vh] overflow-hidden flex flex-col">
-          {/* Step 1: file */}
+        <div className="px-6 pb-2 min-h-[400px] max-h-[70vh] overflow-hidden flex flex-col">
+          {/* Step 1: source picker */}
           {step === 1 && (
-            <ScrollArea className="flex-1 -mx-1 px-1 thin-scroll">
-              {filesLoading ? (
-                <div className="flex items-center justify-center py-12">
-                  <Loader2 className="w-6 h-6 animate-spin text-[#005FB8]" />
-                </div>
-              ) : files.length === 0 ? (
-                <p className="text-sm text-slate-500 py-8 text-center">No se encontraron archivos .xlsx en tu OneDrive.</p>
-              ) : (
-                <div className="space-y-1.5 py-2">
-                  {files.map((f) => (
-                    <button
-                      key={f.id}
-                      onClick={() => pickFile(f)}
-                      disabled={filesLoading}
-                      className="w-full flex items-center gap-3 p-3 rounded-lg border border-slate-200 hover:border-[#005FB8] hover:bg-[#005FB8]/5 transition-all text-left"
-                      data-testid={`file-${f.id}`}
-                    >
-                      <FileSpreadsheet className="w-5 h-5 text-emerald-600 shrink-0" />
-                      <div className="min-w-0 flex-1">
-                        <p className="text-sm font-medium truncate">{f.name}</p>
-                        <p className="text-xs text-slate-500">
-                          {f.size ? `${(f.size / 1024).toFixed(1)} KB` : ""}{" "}· {f.modified ? new Date(f.modified).toLocaleDateString() : ""}
-                        </p>
+            <Tabs value={source} onValueChange={setSource} className="flex-1 flex flex-col overflow-hidden">
+              <TabsList className="grid w-full grid-cols-2 mb-3">
+                <TabsTrigger value="onedrive" data-testid="tab-onedrive">
+                  <Cloud className="w-4 h-4 mr-1.5" /> OneDrive
+                </TabsTrigger>
+                <TabsTrigger value="upload" data-testid="tab-upload">
+                  <HardDrive className="w-4 h-4 mr-1.5" /> Subir desde mi dispositivo
+                </TabsTrigger>
+              </TabsList>
+
+              <TabsContent value="onedrive" className="flex-1 overflow-hidden mt-0">
+                <ScrollArea className="h-full -mx-1 px-1 thin-scroll">
+                  {odLoading ? (
+                    <div className="flex items-center justify-center py-12">
+                      <Loader2 className="w-6 h-6 animate-spin text-[#005FB8]" />
+                    </div>
+                  ) : odFiles.length === 0 ? (
+                    <div className="text-center py-8">
+                      <Cloud className="w-10 h-10 text-slate-300 mx-auto mb-3" />
+                      <p className="text-sm text-slate-500 mb-1">No se encontraron archivos .xlsx en tu OneDrive.</p>
+                      <p className="text-xs text-slate-400 mb-4">Puede que tu OneDrive no tenga archivos Excel o que la sesión haya expirado.</p>
+                      <div className="flex gap-2 justify-center">
+                        <Button variant="outline" size="sm" onClick={loadOneDrive} data-testid="reload-onedrive-btn">
+                          <Loader2 className={`w-4 h-4 mr-1 ${odLoading ? "animate-spin" : ""}`} /> Reintentar
+                        </Button>
+                        <Button size="sm" onClick={() => setSource("upload")} className="bg-[#005FB8] hover:bg-[#004A94]" data-testid="switch-to-upload-btn">
+                          <UploadCloud className="w-4 h-4 mr-1" /> Subir desde dispositivo
+                        </Button>
                       </div>
-                      <ChevronRight className="w-4 h-4 text-slate-400" />
-                    </button>
-                  ))}
+                    </div>
+                  ) : (
+                    <div className="space-y-1.5 py-2">
+                      {odFiles.map((f) => (
+                        <button
+                          key={f.id}
+                          onClick={() => pickFile(f, "onedrive")}
+                          className="w-full flex items-center gap-3 p-3 rounded-lg border border-slate-200 hover:border-[#005FB8] hover:bg-[#005FB8]/5 transition-all text-left"
+                          data-testid={`file-${f.id}`}
+                        >
+                          <FileSpreadsheet className="w-5 h-5 text-emerald-600 shrink-0" />
+                          <div className="min-w-0 flex-1">
+                            <p className="text-sm font-medium truncate">{f.name}</p>
+                            <p className="text-xs text-slate-500">
+                              {f.size ? `${(f.size / 1024).toFixed(1)} KB` : ""}{" "}· {f.modified ? new Date(f.modified).toLocaleDateString() : ""}
+                            </p>
+                          </div>
+                          <ChevronRight className="w-4 h-4 text-slate-400" />
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </ScrollArea>
+              </TabsContent>
+
+              <TabsContent value="upload" className="flex-1 overflow-hidden mt-0">
+                <div className="flex flex-col h-full gap-3">
+                  {/* Upload zone */}
+                  <div
+                    className="border-2 border-dashed border-slate-300 hover:border-[#005FB8] hover:bg-[#005FB8]/5 rounded-lg p-6 cursor-pointer transition-colors text-center"
+                    onClick={() => fileInputRef.current?.click()}
+                    data-testid="upload-dropzone"
+                  >
+                    {uploading ? (
+                      <div className="flex items-center justify-center gap-2 py-4">
+                        <Loader2 className="w-5 h-5 animate-spin text-[#005FB8]" />
+                        <span className="text-sm text-slate-600">Subiendo archivo...</span>
+                      </div>
+                    ) : (
+                      <>
+                        <UploadCloud className="w-10 h-10 text-[#005FB8] mx-auto mb-2" />
+                        <p className="text-sm font-medium text-slate-800">Haz click o arrastra un archivo .xlsx aquí</p>
+                        <p className="text-xs text-slate-500 mt-1">Máximo 15 MB · Solo formato .xlsx</p>
+                      </>
+                    )}
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      accept=".xlsx"
+                      className="hidden"
+                      onChange={handleFileUpload}
+                      data-testid="file-input"
+                    />
+                  </div>
+
+                  {/* Existing uploads */}
+                  <div className="flex-1 overflow-hidden">
+                    <p className="text-xs uppercase tracking-wider text-slate-500 font-semibold mb-2">Archivos subidos previamente</p>
+                    <ScrollArea className="h-[calc(100%-24px)] thin-scroll">
+                      {upLoading ? (
+                        <div className="flex items-center justify-center py-8">
+                          <Loader2 className="w-5 h-5 animate-spin text-[#005FB8]" />
+                        </div>
+                      ) : upFiles.length === 0 ? (
+                        <p className="text-xs text-slate-400 text-center py-4">Aún no has subido ningún archivo.</p>
+                      ) : (
+                        <div className="space-y-1.5">
+                          {upFiles.map((f) => (
+                            <div
+                              key={f.id}
+                              className="w-full flex items-center gap-3 p-3 rounded-lg border border-slate-200 hover:border-[#005FB8] hover:bg-[#005FB8]/5 transition-all"
+                            >
+                              <button
+                                onClick={() => pickFile(f, "upload")}
+                                className="flex-1 flex items-center gap-3 text-left min-w-0"
+                                data-testid={`upload-file-${f.id}`}
+                              >
+                                <FileSpreadsheet className="w-5 h-5 text-blue-600 shrink-0" />
+                                <div className="min-w-0 flex-1">
+                                  <p className="text-sm font-medium truncate">{f.filename}</p>
+                                  <p className="text-xs text-slate-500">
+                                    {(f.size / 1024).toFixed(1)} KB · {new Date(f.created_at).toLocaleDateString()}
+                                  </p>
+                                </div>
+                                <ChevronRight className="w-4 h-4 text-slate-400" />
+                              </button>
+                              <button
+                                onClick={(e) => deleteUpload(f.id, e)}
+                                className="p-1 hover:bg-rose-50 rounded transition-colors text-slate-400 hover:text-rose-600"
+                                data-testid={`delete-upload-${f.id}`}
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </ScrollArea>
+                  </div>
                 </div>
-              )}
-            </ScrollArea>
+              </TabsContent>
+            </Tabs>
           )}
 
           {/* Step 2: sheet + grid picker */}
@@ -287,7 +469,7 @@ export default function CreateMapDialog({ open, onOpenChange, onCreated }) {
             </div>
           )}
 
-          {/* Step 3: columns */}
+          {/* Step 3 */}
           {step === 3 && (
             <ScrollArea className="flex-1 thin-scroll">
               <div className="space-y-4 py-2 pr-2">

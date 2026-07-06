@@ -1,0 +1,31 @@
+{
+  "summary": "Iteration 10: New backend feature — upload .xlsx from device. Added 22 tests covering POST /api/uploads/excel (valid/no-session/non-xlsx/empty/corrupt/oversize), listing (with user isolation and no 'data' leak), sheets/preview/data endpoints, DELETE (with cross-user 404), and Map integration with source='upload' (default 'onedrive' preserved, editor access, /maps/{id}/data does NOT call MS Graph). All 22/22 new tests pass. Full regression: 135/135 pass sequentially (previous 113 + 22 new).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/uploads/excel, GET /api/uploads/files (and all endpoints using Header(...))", "issue": "Missing x-session-id header returns 422 (FastAPI validation) instead of 401 as spec suggests. Consistent with the rest of the app but slightly inconsistent semantics — request contract says 401. Consider Header(None) + explicit 401 raise inside get_session for uniform auth error responses."}
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iteration10_uploads.py",
+    "/app/test_reports/pytest/iteration_10.xml",
+    "/app/test_reports/pytest/iteration_10_full.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "MongoDB 15MB upload cap is close to BSON limit (16MB) — good. But storing whole workbooks inline in Mongo does not scale; consider GridFS for future iterations.",
+    "get_session uses Header(...) (required), which yields 422 on missing header. Product spec expects 401. Consider Header(None) + custom 401 raise for consistent auth semantics across all endpoints.",
+    "openpyxl.load_workbook is called twice for each request (once on validate at upload, then again on every read). For large files, cache sheet_names on the upload doc to avoid full-load overhead."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration10_uploads.py (new)"
+  ],
+  "success_rate": {"backend": "100% (135/135)", "frontend": "not tested (skipped per request)"},
+  "test_credentials": "None required (test sessions injected directly into Mongo via TEST_ prefixed docs; cleaned up in fixture teardown).",
+  "seed_data_creation": "In-test xlsx generated via openpyxl.Workbook and posted as multipart. All TEST_* sessions, uploads, and maps deleted in module-scoped teardown.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "New test file: /app/backend/tests/test_iteration10_uploads.py (22 tests). Full regression must run with -n 0 (sequential) to avoid transient preview-URL connect-timeouts observed when tests run in parallel over ingress. Sequential run: 135/135 passing in ~89s.",
+  "rca of the issue": "N/A — no bugs found. Iteration 10 feature works as specified. Uploads persist in Mongo (uploads collection), map source='upload' correctly bypasses MS Graph in /maps/{id}/data, user isolation and editor access both work. Backwards compatibility with source='onedrive' (default) preserved."
+}
