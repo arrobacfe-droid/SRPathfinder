@@ -110,6 +110,8 @@ class MapCreate(BaseModel):
     first_col: int = 1   # 1-indexed first column to consider
     status_column: Optional[str] = None
     status_visible_values: List[str] = []
+    data_row_from: Optional[int] = None  # 1-based inclusive first data row
+    data_row_to: Optional[int] = None    # 1-based inclusive last data row
 
 
 class MapUpdate(BaseModel):
@@ -121,6 +123,8 @@ class MapUpdate(BaseModel):
     first_col: Optional[int] = None
     status_column: Optional[str] = None
     status_visible_values: Optional[List[str]] = None
+    data_row_from: Optional[int] = None
+    data_row_to: Optional[int] = None
 
 
 class PointEdit(BaseModel):
@@ -472,6 +476,8 @@ async def create_map(payload: MapCreate, x_session_id: str = Header(...)):
         "status_column": payload.status_column,
         "status_visible_values": payload.status_visible_values,
         "point_overrides": {},
+        "data_row_from": payload.data_row_from,
+        "data_row_to": payload.data_row_to,
         "is_public": False,
         "share_token": None,
         "cached_rows": [],
@@ -554,6 +560,8 @@ def _build_map_rows(headers, data_rows, m):
     lng_col = m.get("lng_column")
     status_col = m.get("status_column")
     status_visible = set(m.get("status_visible_values") or [])
+    row_from = m.get("data_row_from")
+    row_to = m.get("data_row_to")
     # Backwards-compat fallback
     if (not lat_col or lat_col not in headers) and len(headers) >= 2:
         lat_col = headers[-2]
@@ -569,6 +577,12 @@ def _build_map_rows(headers, data_rows, m):
     overrides = m.get("point_overrides", {}) or {}
     rows = []
     for idx, vals in enumerate(data_rows):
+        # Row range filter (1-based, inclusive)
+        row_num = idx + 1
+        if row_from is not None and row_num < row_from:
+            continue
+        if row_to is not None and row_num > row_to:
+            continue
         try:
             lat_raw = vals[lat_idx]
             lat = float(lat_raw) if lat_raw is not None and str(lat_raw).strip() != "" else None

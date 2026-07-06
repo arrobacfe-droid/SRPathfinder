@@ -23,7 +23,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
-export default function ControlPanel({ mapData, loading, onUpdateColumns, onUpdateCoords, onUpdateStatus, onUpdateRange }) {
+export default function ControlPanel({ mapData, loading, onUpdateColumns, onUpdateCoords, onUpdateStatus, onUpdateRange, onUpdateRowRange }) {
   const [collapsed, setCollapsed] = useState(false);
 
   const headers = mapData?.headers || [];
@@ -38,15 +38,21 @@ export default function ControlPanel({ mapData, loading, onUpdateColumns, onUpda
   const visible = useMemo(() => new Set(mapData?.map?.visible_columns || []), [mapData]);
   const headerRow = mapData?.map?.header_row ?? 1;
   const firstCol = mapData?.map?.first_col ?? 1;
+  const rowFrom = mapData?.map?.data_row_from ?? "";
+  const rowTo = mapData?.map?.data_row_to ?? "";
 
   const [localHeaderRow, setLocalHeaderRow] = useState(headerRow);
   const [localFirstCol, setLocalFirstCol] = useState(firstCol);
+  const [localRowFrom, setLocalRowFrom] = useState(rowFrom);
+  const [localRowTo, setLocalRowTo] = useState(rowTo);
 
   // Reset local when map changes
   useMemo(() => {
     setLocalHeaderRow(headerRow);
     setLocalFirstCol(firstCol);
-  }, [headerRow, firstCol]);
+    setLocalRowFrom(rowFrom);
+    setLocalRowTo(rowTo);
+  }, [headerRow, firstCol, rowFrom, rowTo]);
 
   const displayHeaders = headers.filter((h) => h !== latCol && h !== lngCol);
   const totalPoints = mapData?.rows?.length || 0;
@@ -73,6 +79,18 @@ export default function ControlPanel({ mapData, loading, onUpdateColumns, onUpda
       header_row: Math.max(1, Number(localHeaderRow) || 1),
       first_col: Math.max(1, Number(localFirstCol) || 1),
     });
+  };
+
+  const applyRowRange = () => {
+    const from = localRowFrom === "" ? null : Math.max(1, Number(localRowFrom) || 1);
+    const to = localRowTo === "" ? null : Math.max(1, Number(localRowTo) || 1);
+    onUpdateRowRange({ data_row_from: from, data_row_to: to });
+  };
+
+  const clearRowRange = () => {
+    setLocalRowFrom("");
+    setLocalRowTo("");
+    onUpdateRowRange({ data_row_from: null, data_row_to: null });
   };
 
   if (collapsed) {
@@ -170,6 +188,64 @@ export default function ControlPanel({ mapData, loading, onUpdateColumns, onUpda
                 data-testid="apply-range-btn"
               >
                 Aplicar rango
+              </Button>
+            )}
+          </div>
+
+          {/* Row-range slice (para dividir una hoja en varios mapas) */}
+          <div className="p-4 border-b border-slate-100 space-y-2">
+            <div className="flex items-center justify-between mb-1">
+              <div className="flex items-center gap-2">
+                <SlidersHorizontal className="w-3.5 h-3.5 text-slate-400" />
+                <p className="text-xs uppercase tracking-wider text-slate-500 font-semibold">Filas a incluir</p>
+              </div>
+              {(rowFrom !== "" || rowTo !== "") && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-6 text-[10px] text-slate-500"
+                  onClick={clearRowRange}
+                  data-testid="clear-row-range-btn"
+                >
+                  Todas
+                </Button>
+              )}
+            </div>
+            <p className="text-[10px] text-slate-500 -mt-1">Divide una hoja en varios mapas (ej. filas 1–45 en uno y 46–91 en otro).</p>
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <Label className="text-[10px] uppercase text-slate-400 mb-0.5 block">Desde fila</Label>
+                <Input
+                  type="number"
+                  min={1}
+                  value={localRowFrom}
+                  onChange={(e) => setLocalRowFrom(e.target.value)}
+                  placeholder="1"
+                  className="h-8 text-xs"
+                  data-testid="row-from-input"
+                />
+              </div>
+              <div>
+                <Label className="text-[10px] uppercase text-slate-400 mb-0.5 block">Hasta fila</Label>
+                <Input
+                  type="number"
+                  min={1}
+                  value={localRowTo}
+                  onChange={(e) => setLocalRowTo(e.target.value)}
+                  placeholder="—"
+                  className="h-8 text-xs"
+                  data-testid="row-to-input"
+                />
+              </div>
+            </div>
+            {(String(localRowFrom) !== String(rowFrom) || String(localRowTo) !== String(rowTo)) && (
+              <Button
+                size="sm"
+                className="w-full h-7 text-xs bg-[#005FB8] hover:bg-[#004A94]"
+                onClick={applyRowRange}
+                data-testid="apply-row-range-btn"
+              >
+                Aplicar
               </Button>
             )}
           </div>

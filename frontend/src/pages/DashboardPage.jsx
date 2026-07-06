@@ -170,6 +170,30 @@ export default function DashboardPage() {
     }
   };
 
+  const handleUpdateRowRange = async (partial) => {
+    try {
+      await api.patch(`/maps/${activeMapId}`, partial);
+      toast.success("Filas actualizadas");
+      await loadMapData(activeMapId);
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "No se pudo actualizar");
+    }
+  };
+
+  const handleRenameMap = async () => {
+    if (!activeMap) return;
+    const newName = window.prompt("Nuevo nombre del mapa:", activeMap.name);
+    if (!newName || newName.trim() === "" || newName === activeMap.name) return;
+    try {
+      const res = await api.patch(`/maps/${activeMapId}`, { name: newName.trim() });
+      toast.success("Mapa renombrado");
+      setMaps((prev) => prev.map((m) => m.id === res.data.id ? res.data : m));
+      setMapData((prev) => prev ? { ...prev, map: res.data } : prev);
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "No se pudo renombrar");
+    }
+  };
+
   const handleShareUpdate = (updatedMap) => {
     setMaps((prev) => prev.map((m) => m.id === updatedMap.id ? updatedMap : m));
     setMapData((prev) => prev ? { ...prev, map: updatedMap } : prev);
@@ -225,6 +249,15 @@ export default function DashboardPage() {
               <DropdownMenuItem onClick={() => setCreateOpen(true)} className="cursor-pointer" data-testid="new-map-menu-btn">
                 <Plus className="w-4 h-4 mr-2" /> Nuevo mapa
               </DropdownMenuItem>
+              {activeMap && activeMap.is_owner && (
+                <DropdownMenuItem
+                  onClick={handleRenameMap}
+                  className="cursor-pointer"
+                  data-testid="rename-map-menu-btn"
+                >
+                  Renombrar mapa actual
+                </DropdownMenuItem>
+              )}
               {activeMap && activeMap.is_owner && (
                 <DropdownMenuItem
                   onClick={() => handleDeleteMap(activeMap.id)}
@@ -308,6 +341,7 @@ export default function DashboardPage() {
               onUpdateCoords={handleUpdateCoords}
               onUpdateStatus={handleUpdateStatus}
               onUpdateRange={handleUpdateRange}
+              onUpdateRowRange={handleUpdateRowRange}
             />
             <EditPointSheet
               point={selectedPoint}

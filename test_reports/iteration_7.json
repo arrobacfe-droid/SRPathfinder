@@ -1,0 +1,52 @@
+{
+  "summary": "Iteration 7: verified data_row_from/data_row_to fields on POST/PATCH /api/maps and PATCH renaming (owner + editor). 12 new tests added; all 99 backend tests pass (87 regression + 12 new).",
+  "tested_scope": ["backend"],
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "feature_verification": {
+    "endpoints_covered": [
+      "POST /api/maps — data_row_from/data_row_to optional, default null, persisted in Mongo and returned in response",
+      "POST /api/maps — omitting both fields still works (null default); explicit null in payload also accepted",
+      "POST /api/maps — partial (only data_row_from) accepted; the other remains null",
+      "PATCH /api/maps/{id} — sets data_row_from=1, data_row_to=45 correctly; GET reflects change",
+      "PATCH /api/maps/{id} — partial update of only data_row_to leaves data_row_from untouched",
+      "PATCH /api/maps/{id} — DOCUMENTED: sending data_row_from=null does NOT reset to null (exclude_none=True filters it out); prior value preserved. Not a bug per iteration 7 spec but a future improvement if reset needed.",
+      "PATCH /api/maps/{id} — owner can rename via {name: ...}; GET reflects new name",
+      "PATCH /api/maps/{id} — editor (added via POST /editors) can also rename the map; DB confirms persistence",
+      "PATCH /api/maps/{id} — combined update {name, data_row_from, data_row_to} all applied atomically",
+      "Legacy compat — inserting a map doc without data_row_from/data_row_to fields returns None on GET; PATCH then sets both correctly"
+    ]
+  },
+  "passed": [
+    "TestCreateMapRowRange: 4 tests (defaults null, both set, only from, explicit null)",
+    "TestPatchRowRange: 3 tests (set both, partial update, null-does-not-reset documented)",
+    "TestPatchRename: 3 tests (owner rename, editor rename, combined rename+row range)",
+    "TestLegacyRowRangeCompat: 1 test (legacy map without fields is readable + patchable)",
+    "TestCleanup: 1 stub (no leaked TEST_ data — verified 0 sessions / 0 maps remain post-run)",
+    "Regression: all 87 prior tests still pass (99 total)"
+  ],
+  "failed": [],
+  "test_report_links": [
+    "/app/backend/tests/test_iteration7_row_range.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py MapUpdate.model_dump(exclude_none=True) prevents explicit reset of data_row_from/data_row_to (and any other field) to null via PATCH. If the frontend needs to clear a previously set row range, this must be handled specially — either by switching to model_dump(exclude_unset=True), by adding a dedicated 'clear' endpoint, or by using MongoDB $unset. Currently the frontend must send a sentinel or the user cannot revert to 'all rows'.",
+    "No server-side validation of data_row_from/data_row_to relationship (e.g., from <= to, both >= 1). A user could set data_row_from=100, data_row_to=1 and _build_map_rows would silently return zero rows.",
+    "No upper bound on data_row_from/data_row_to; extreme values are accepted (harmless because Python iteration handles it, but Pydantic Field(ge=1) would be defensive).",
+    "_build_map_rows uses 1-based row_num = idx + 1 where idx is 0-based over data_rows (data rows only, header excluded). This is consistent but should be documented — a user might expect 'row 1' to mean row 1 in the Excel grid (which is the header). A UI tooltip clarifying '1 = first data row after header' would prevent confusion.",
+    "server.py is now ~830 lines; prior recommendation to split into routers stands.",
+    "MapUpdate accepts data_row_from/data_row_to but there's no test that the actual /maps/{id}/data endpoint honors them at runtime (this requires MS Graph, not testable e2e). Code inspection at lines ~578-585 confirms the filter is applied correctly (row_from and row_to are 1-based inclusive, checked with 'row_num < row_from' / 'row_num > row_to')."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration7_row_range.py (new, 12 tests)"
+  ],
+  "success_rate": {"backend": "100% (99/99)", "frontend": "not tested (skipped per request)"},
+  "test_credentials": "None. TEST_it7_ prefixed sessions/users injected directly into MongoDB (owner, editor).",
+  "seed_data_creation": "Module-scoped fixtures owner_session/editor_session insert TEST_it7_ sessions. Function-scoped owned_map fixture creates+cleans a map per test. Post-run: 0 TEST_ sessions / 0 TEST_ maps in DB.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Baseline is now 99 tests (87 previous + 12 iteration 7). Endpoints requiring real MS Graph token still not e2e testable: /onedrive/*, /maps/{id}/data. The /maps/{id}/data row-range filter (server.py _build_map_rows lines ~578-585) is verified only by code inspection; an integration test would need to mock httpx.AsyncClient or seed cached_rows. The QR PNG change was frontend-only per iteration 7 spec and was not tested (backend-only scope requested).",
+  "rca_of_the_issue": "N/A — feature verification, no bugs encountered. One documented behavior: PATCH cannot reset row range to null due to exclude_none=True. Not a blocker per spec but flagged as a future improvement."
+}

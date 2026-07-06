@@ -26,6 +26,7 @@ import {
   MapPin,
   Info,
   Filter,
+  SlidersHorizontal,
 } from "lucide-react";
 import api from "@/lib/api";
 import { toast } from "sonner";
@@ -51,6 +52,9 @@ export default function CreateMapDialog({ open, onOpenChange, onCreated }) {
   const [lngCol, setLngCol] = useState("");
   const [statusCol, setStatusCol] = useState("__none__");
   const [visibleCols, setVisibleCols] = useState([]);
+  const [rowFrom, setRowFrom] = useState("");
+  const [rowTo, setRowTo] = useState("");
+  const [totalRows, setTotalRows] = useState(0);
   const [name, setName] = useState("");
   const [loadingHeaders, setLoadingHeaders] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -69,6 +73,9 @@ export default function CreateMapDialog({ open, onOpenChange, onCreated }) {
         setLatCol("");
         setLngCol("");
         setStatusCol("__none__");
+        setRowFrom("");
+        setRowTo("");
+        setTotalRows(0);
         setName("");
         setHeaderRow(1);
         setFirstCol(1);
@@ -142,6 +149,7 @@ export default function CreateMapDialog({ open, onOpenChange, onCreated }) {
       setSampleRows(res.data.sample_rows || []);
       setLatCol(res.data.suggested_lat_column || "");
       setLngCol(res.data.suggested_lng_column || "");
+      setTotalRows(res.data.row_count || 0);
       const auto = res.data.headers.filter(
         (h) => h !== res.data.suggested_lat_column && h !== res.data.suggested_lng_column
       );
@@ -346,6 +354,39 @@ export default function CreateMapDialog({ open, onOpenChange, onCreated }) {
                       ))}
                     </SelectContent>
                   </Select>
+                </div>
+
+                <div className="border border-slate-200 rounded-lg p-4 bg-slate-50/50 space-y-2">
+                  <div className="flex items-center gap-2">
+                    <SlidersHorizontal className="w-4 h-4 text-[#005FB8]" />
+                    <Label className="text-xs font-semibold uppercase tracking-wider text-slate-700">Rango de filas (opcional)</Label>
+                    <span className="ml-auto text-[10px] text-slate-500 font-mono">Total: {totalRows}</span>
+                  </div>
+                  <p className="text-xs text-slate-500 -mt-1">Incluye solo un rango de filas. Útil para dividir una hoja en varios mapas.</p>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <Label className="text-[10px] uppercase text-slate-400 mb-1 block">Desde fila</Label>
+                      <Input
+                        type="number"
+                        min={1}
+                        value={rowFrom}
+                        onChange={(e) => setRowFrom(e.target.value)}
+                        placeholder="1"
+                        data-testid="row-from-create-input"
+                      />
+                    </div>
+                    <div>
+                      <Label className="text-[10px] uppercase text-slate-400 mb-1 block">Hasta fila</Label>
+                      <Input
+                        type="number"
+                        min={1}
+                        value={rowTo}
+                        onChange={(e) => setRowTo(e.target.value)}
+                        placeholder={totalRows > 0 ? String(totalRows) : "todas"}
+                        data-testid="row-to-create-input"
+                      />
+                    </div>
+                  </div>
                 </div>
 
                 <div>

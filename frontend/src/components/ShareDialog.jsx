@@ -12,7 +12,7 @@ import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
-import { QRCodeSVG } from "qrcode.react";
+import { QRCodeCanvas } from "qrcode.react";
 import {
   Copy,
   RefreshCw,
@@ -105,17 +105,23 @@ export default function ShareDialog({ open, onOpenChange, map: mapDoc, onMapUpda
   };
 
   const downloadQR = () => {
-    const svg = document.querySelector("#share-qr-svg");
-    if (!svg) return;
-    const serializer = new XMLSerializer();
-    const svgString = serializer.serializeToString(svg);
-    const blob = new Blob([svgString], { type: "image/svg+xml" });
-    const url = URL.createObjectURL(blob);
+    const canvas = document.querySelector("#share-qr-canvas");
+    if (!canvas) return;
+    // Redraw to a larger canvas for a higher-res PNG
+    const size = 720;
+    const off = document.createElement("canvas");
+    off.width = size;
+    off.height = size;
+    const ctx = off.getContext("2d");
+    ctx.fillStyle = "#FFFFFF";
+    ctx.fillRect(0, 0, size, size);
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(canvas, 0, 0, size, size);
+    const url = off.toDataURL("image/png");
     const a = document.createElement("a");
     a.href = url;
-    a.download = `${mapDoc?.name || "mapa"}-qr.svg`;
+    a.download = `${(mapDoc?.name || "mapa").replace(/[^a-z0-9-_ ]/gi, "_")}-qr.png`;
     a.click();
-    URL.revokeObjectURL(url);
   };
 
   const addEditor = async () => {
@@ -203,8 +209,8 @@ export default function ShareDialog({ open, onOpenChange, map: mapDoc, onMapUpda
 
               <div className="flex flex-col items-center bg-white border border-slate-200 rounded-lg p-4">
                 <div className="p-3 bg-white rounded-md">
-                  <QRCodeSVG
-                    id="share-qr-svg"
+                  <QRCodeCanvas
+                    id="share-qr-canvas"
                     value={publicUrl}
                     size={160}
                     level="M"
@@ -215,7 +221,7 @@ export default function ShareDialog({ open, onOpenChange, map: mapDoc, onMapUpda
                 </div>
                 <p className="text-xs text-slate-500 mt-3">Escanea este QR desde cualquier celular para abrir el mapa.</p>
                 <Button size="sm" variant="ghost" className="mt-2" onClick={downloadQR} data-testid="download-qr-btn">
-                  Descargar QR (SVG)
+                  Descargar QR (PNG)
                 </Button>
               </div>
 
