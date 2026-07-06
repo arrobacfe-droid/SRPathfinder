@@ -186,21 +186,21 @@ class TestPatchRowRange:
         assert body["data_row_from"] == 10  # unchanged
         assert body["data_row_to"] == 99
 
-    def test_patch_null_does_not_reset_documented(self, owner_session, owned_map, mongo_db):
-        """Documented behavior: PATCH data_row_from=null does NOT reset because
-        the backend uses exclude_none=True in MapUpdate.model_dump()."""
+    def test_patch_null_resets_field(self, owner_session, owned_map, mongo_db):
+        """PATCH data_row_from=null now resets to null (exclude_unset=True).
+        Frontend uses this to clear a previously-set row range."""
         # Set to a value
         requests.patch(f"{API}/maps/{owned_map['id']}",
                        json={"data_row_from": 7, "data_row_to": 77},
                        headers=_h(owner_session), timeout=15)
-        # Attempt to reset with null
+        # Reset both via explicit null
         r = requests.patch(f"{API}/maps/{owned_map['id']}",
-                           json={"data_row_from": None},
+                           json={"data_row_from": None, "data_row_to": None},
                            headers=_h(owner_session), timeout=15)
-        # Because only null was sent and exclude_none strips it → 400 "No updates"
-        # or it's ignored silently. Either way, the value must NOT become null.
+        assert r.status_code == 200, r.text
         doc = mongo_db.maps.find_one({"id": owned_map["id"]})
-        assert doc["data_row_from"] == 7, "exclude_none=True should prevent null reset"
+        assert doc["data_row_from"] is None
+        assert doc["data_row_to"] is None
 
 
 class TestPatchRename:

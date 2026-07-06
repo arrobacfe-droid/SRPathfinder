@@ -513,8 +513,9 @@ async def get_map(map_id: str, x_session_id: str = Header(...)):
 @api_router.patch("/maps/{map_id}")
 async def update_map(map_id: str, payload: MapUpdate, x_session_id: str = Header(...)):
     s = await get_session(x_session_id)
-    m = await _get_editable_map(map_id, s)
-    updates = {k: v for k, v in payload.model_dump(exclude_none=True).items()}
+    await _get_editable_map(map_id, s)
+    # Use exclude_unset=True so clients can explicitly reset fields to null
+    updates = payload.model_dump(exclude_unset=True)
     if not updates:
         raise HTTPException(status_code=400, detail="No updates")
     updates["updated_at"] = now_iso()
