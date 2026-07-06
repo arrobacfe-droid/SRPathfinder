@@ -133,23 +133,53 @@ class PointEdit(BaseModel):
 
 # ============ Auth ============
 
+ALLOWED_REDIRECT_SUFFIXES = (
+    ".preview.emergentagent.com",
+    ".emergent.host",
+    "localhost:3000",
+    "127.0.0.1:3000",
+)
+
+
+def _validate_redirect_uri(uri: str) -> bool:
+    """Only allow redirect URIs that end at /auth/callback on known hosts."""
+    if not uri or not uri.startswith(("http://", "https://")):
+        return False
+    if not uri.endswith("/auth/callback"):
+        return False
+    try:
+        stripped = uri.split("://", 1)[1]
+        host = stripped.split("/", 1)[0]
+    except IndexError:
+        return False
+    return any(host == suf.lstrip(".") or host.endswith(suf) for suf in ALLOWED_REDIRECT_SUFFIXES)
+
+
 @api_router.get("/auth/microsoft/url")
-async def microsoft_auth_url(prompt: Optional[str] = None):
+async def microsoft_auth_url(prompt: Optional[str] = None, redirect_uri: Optional[str] = None):
+    # Frontend can pass its own origin so preview & production both work
+    if redirect_uri and _validate_redirect_uri(redirect_uri):
+        chosen_redirect = redirect_uri
+    else:
+        chosen_redirect = REDIRECT_URI
     state = str(uuid.uuid4())
-    await db.oauth_states.insert_one({"state": state, "created_at": now_iso()})
+    await db.oauth_states.insert_one({
+        "state": state,
+        "redirect_uri": chosen_redirect,
+        "created_at": now_iso(),
+    })
     url = (
         f"{AUTHORITY}/oauth2/v2.0/authorize"
         f"?client_id={CLIENT_ID}"
         f"&response_type=code"
-        f"&redirect_uri={REDIRECT_URI}"
+        f"&redirect_uri={chosen_redirect}"
         f"&response_mode=query"
         f"&scope={SCOPES}"
         f"&state={state}"
     )
-    # prompt can be: login, select_account, consent, none
     if prompt in ("login", "select_account", "consent", "none"):
         url += f"&prompt={prompt}"
-    return {"url": url, "state": state}
+    return {"url": url, "state": state, "redirect_uri": chosen_redirect}
 
 
 @api_router.post("/auth/microsoft/callback")
@@ -164,6 +194,9 @@ async def microsoft_callback(payload: dict = Body(...)):
         raise HTTPException(status_code=400, detail="Invalid state")
     await db.oauth_states.delete_one({"state": state})
 
+    # Use the same redirect_uri stored during auth URL generation
+    used_redirect = state_doc.get("redirect_uri") or REDIRECT_URI
+
     async with httpx.AsyncClient() as http:
         resp = await http.post(
             f"{AUTHORITY}/oauth2/v2.0/token",
@@ -171,7 +204,7 @@ async def microsoft_callback(payload: dict = Body(...)):
                 "client_id": CLIENT_ID,
                 "client_secret": CLIENT_SECRET,
                 "code": code,
-                "redirect_uri": REDIRECT_URI,
+                "redirect_uri": used_redirect,
                 "grant_type": "authorization_code",
                 "scope": SCOPES,
             },

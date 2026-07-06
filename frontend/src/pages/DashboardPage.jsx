@@ -79,7 +79,10 @@ export default function DashboardPage() {
     localStorage.removeItem("session_id");
     localStorage.removeItem("user");
     try {
-      const res = await api.get("/auth/microsoft/url", { params: { prompt: "select_account" } });
+      const redirectUri = `${window.location.origin}/auth/callback`;
+      const res = await api.get("/auth/microsoft/url", {
+        params: { prompt: "select_account", redirect_uri: redirectUri }
+      });
       window.location.href = res.data.url;
     } catch (e) {
       toast.error("No se pudo iniciar el cambio de cuenta");

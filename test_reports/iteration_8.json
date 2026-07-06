@@ -1,0 +1,47 @@
+{
+  "summary": "Iteration 8: Verified dynamic OAuth redirect_uri validation and callback state persistence. Created 14 new tests covering whitelist validation, mongo state persistence, and callback flow. All 113 backend tests pass (99 previous regression + 14 new).",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration8_dynamic_redirect.py",
+    "/app/test_reports/pytest/iteration8_results.xml",
+    "/app/test_reports/pytest/iteration8_full.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "_validate_redirect_uri correctly enforces suffix match (host == suf.lstrip('.') OR host.endswith(suf)); lookalike hosts like foo.emergent.host.evil.com are properly rejected because the check is on host suffix, and evil.com host does not match .emergent.host suffix.",
+    "Callback correctly reads redirect_uri from state_doc and reuses it in token exchange (server.py:198,207), preventing AADSTS7000215 mismatch across preview/prod.",
+    "server.py is 868 lines — approaching the >700 line threshold; consider splitting auth/maps/files into separate routers in a future iteration."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration8_dynamic_redirect.py (new)"
+  ],
+  "success_rate": {"backend": "100% (113/113)", "frontend": "n/a (skipped per request)"},
+  "test_credentials": "None required — /api/auth/microsoft/url is public.",
+  "seed_data_creation": "None. Tests create ephemeral oauth_states docs and clean them up. Additionally purged 77 stale oauth_states leftover from previous iterations.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iteration 8 fix validated: backend now accepts dynamic redirect_uri from frontend, validates via _validate_redirect_uri against ALLOWED_REDIRECT_SUFFIXES (*.preview.emergentagent.com, *.emergent.host, localhost:3000, 127.0.0.1:3000) and requires '/auth/callback' suffix. Stored redirect_uri is reused in callback token exchange. Test file: /app/backend/tests/test_iteration8_dynamic_redirect.py. Full suite: 113 passing.",
+  "verified_scenarios": [
+    "Production redirect (emergent.host) accepted and used in url",
+    "Preview redirect (preview.emergentagent.com) accepted",
+    "No param → env fallback (MS_REDIRECT_URI)",
+    "malicious.com → rejected, fallback used",
+    "wrong path (/other/path) → rejected",
+    "localhost:3000 accepted",
+    "not_a_url → rejected",
+    "foo.emergent.host subdomain accepted",
+    "foo.emergent.host.evil.com → rejected",
+    "oauth_states doc contains correct redirect_uri (custom and fallback)",
+    "callback with invalid state → 400 Invalid state",
+    "callback missing fields → 400",
+    "callback with valid state + fake code → 400 Token exchange failed (NOT AADSTS7000215, proving stored redirect_uri matches)"
+  ]
+}

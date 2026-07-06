@@ -10,7 +10,8 @@ export default function LoginPage() {
   const connectMicrosoft = async () => {
     setLoading(true);
     try {
-      const res = await api.get("/auth/microsoft/url");
+      const redirectUri = `${window.location.origin}/auth/callback`;
+      const res = await api.get("/auth/microsoft/url", { params: { redirect_uri: redirectUri } });
       window.location.href = res.data.url;
     } catch (e) {
       console.error(e);
