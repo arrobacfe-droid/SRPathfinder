@@ -1,0 +1,26 @@
+{
+  "summary": "Iteration 11 bug fix validated. Added 7 unit tests for _resolve_email covering all specified cases; all pass. Full regression: 138 passed / 2 skipped, 1 failure + 1 error observed only under parallel execution — both pass in isolation (pre-existing flakes unrelated to this change). microsoft_callback code path visually verified: line 258 uses _resolve_email(me) and Graph /me is queried with $select including mail,userPrincipalName,otherMails.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "N/A (test infra)", "issue": "test_map_columns_config::test_create_map_with_lat_lng_persists and test_iteration6_collab::test_editor_get_returns_404_before_added occasionally fail under pytest-xdist parallel runs; both pass in isolation. Pre-existing flakiness, not related to iteration 11."}
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iteration11_resolve_email.py",
+    "/app/test_reports/pytest/iteration11_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "_resolve_email is clean, module-level, correctly handles mail > otherMails > UPN #EXT# decoding fallback chain.",
+    "microsoft_callback (line ~258) correctly persists 'email' via _resolve_email(me); Graph $select includes required fields.",
+    "Consider addressing intermittent test failures under pytest-xdist by using unique fixture data or serializing shared-resource tests."
+  ],
+  "updated_files": ["/app/backend/tests/test_iteration11_resolve_email.py"],
+  "success_rate": {"backend": "100% (7/7 new unit tests; 138/138 executable regression in isolation)", "frontend": "N/A"},
+  "seed_data_creation": "None",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Iteration 11 added module-level _resolve_email in server.py (lines 186-205). Unit test file: /app/backend/tests/test_iteration11_resolve_email.py. Two flaky tests exist in the wider suite (test_map_columns_config::test_create_map_with_lat_lng_persists, test_iteration6_collab::test_editor_get_returns_404_before_added) — both pass in isolation; pre-existing xdist race, not caused by this iteration."
+}

@@ -183,6 +183,28 @@ async def microsoft_auth_url(prompt: Optional[str] = None, redirect_uri: Optiona
     return {"url": url, "state": state, "redirect_uri": chosen_redirect}
 
 
+def _resolve_email(m: dict) -> Optional[str]:
+    """Prefer the real mail address over the Azure guest UPN
+    (e.g. 'foo_gmail.com#EXT#@tenant.onmicrosoft.com')."""
+    mail = (m.get("mail") or "").strip()
+    if mail:
+        return mail
+    others = m.get("otherMails") or []
+    if others:
+        return others[0]
+    upn = (m.get("userPrincipalName") or "").strip()
+    if not upn:
+        return None
+    # Decode guest UPN: 'foo_gmail.com#EXT#@tenant.onmicrosoft.com' -> 'foo@gmail.com'
+    if "#EXT#" in upn:
+        local = upn.split("#EXT#", 1)[0]
+        if "_" in local:
+            username, domain = local.rsplit("_", 1)
+            return f"{username}@{domain}"
+        return local
+    return upn
+
+
 @api_router.post("/auth/microsoft/callback")
 async def microsoft_callback(payload: dict = Body(...)):
     code = payload.get("code")
@@ -217,9 +239,11 @@ async def microsoft_callback(payload: dict = Body(...)):
 
     # Fetch user profile
     me_resp = None
+    # Ask Graph for the actual mail fields too (guest UPNs are ugly)
     async with httpx.AsyncClient() as http:
         me_resp = await http.get(
             f"{GRAPH}/me",
+            params={"$select": "id,displayName,mail,userPrincipalName,otherMails"},
             headers={"Authorization": f"Bearer {data['access_token']}"},
             timeout=30,
         )
@@ -231,7 +255,7 @@ async def microsoft_callback(payload: dict = Body(...)):
         "session_id": session_id,
         "user_id": user_id,
         "display_name": me.get("displayName"),
-        "email": me.get("userPrincipalName") or me.get("mail"),
+        "email": _resolve_email(me),
         "access_token": data["access_token"],
         "refresh_token": data.get("refresh_token"),
         "created_at": now_iso(),
