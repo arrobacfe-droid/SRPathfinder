@@ -1,0 +1,34 @@
+{
+  "summary": "Iteration 12 backend testing complete. Added 21 new tests covering local auth (signup, login, validations, email normalization, users unique index, bcrypt $2b$ hash format), session interop (local user can use /auth/me, /auth/logout, /uploads/excel, /maps CRUD; local user cannot fetch source='onedrive' map data due to null access_token), batch-refresh-source (auth required, empty map_ids, foreign upload_id → 404, mixed ownership only updates owned, all foreign → 404, DB persistence verified), and MS-session regression (default source='onedrive' still works). All 21 new tests pass. Full regression: 159 passed / 4 errors (all in test_iteration6_collab TestEditorPrivileges — same pre-existing xdist flakiness noted in iteration 11; the whole file passes 34/34 in isolation).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "N/A (test infra)", "issue": "test_iteration6_collab::TestEditorPrivileges::{test_editor_can_put_point_override,test_editor_can_delete_point_override,test_stranger_point_override_404,test_editor_cannot_delete_map} error only under full-suite pytest-xdist run; file passes 34/34 in isolation. Pre-existing shared-state race, not caused by iteration 12."}
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iteration12_local_auth_batch.py",
+    "/app/test_reports/pytest/iteration12_results.xml",
+    "/app/test_reports/pytest/iteration12_full_regression.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "bcrypt is imported inline at line 293 inside server.py mid-file (after the auth section). Consider moving to top-of-file imports for consistency.",
+    "LocalSignup/LocalLogin use plain `str` for email instead of pydantic EmailStr — regex EMAIL_RE is used explicitly which is fine, but EmailStr would give free RFC validation.",
+    "_create_local_session does not enforce single-active-session; every login inserts a new session doc. Over time the sessions collection will accumulate. Consider deleting prior local sessions for the same user_id on login (or a TTL index on created_at).",
+    "batch_refresh_source uses `to_list(500)` — if user selects more than 500 maps only first 500 are considered. Low risk today, but consider explicit cap or aggregation.",
+    "batch_refresh_source correctly filters to owned maps; foreign map_ids are silently ignored (spec-compliant). Consider returning the ignored ids in the response for UX transparency.",
+    "server.py is 1136 lines — approaching the 700-line guideline soft limit; consider splitting auth / maps / uploads into separate routers.",
+    "startup_indexes creates unique index on users.email only; consider also indexing sessions.session_id and sessions.user_id for lookup performance."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration12_local_auth_batch.py"
+  ],
+  "success_rate": {"backend": "100% (21/21 new tests; 159/159 previous+new tests in isolation; 155/159 under parallel xdist due to pre-existing flakes)", "frontend": "N/A (skipped per request)"},
+  "test_credentials": "Local users are created dynamically per-run with TEST_it12_<uuid>@example.com / Str0ngPass!. No external OAuth needed.",
+  "seed_data_creation": "Each run creates a couple of TEST_it12_* users, sessions, uploads and maps. teardown_module deletes all TEST_-prefixed data at the end.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Iteration 12 delivered local email/password auth + batch map refresh. Test file: /app/backend/tests/test_iteration12_local_auth_batch.py (21 tests, all pass). Uses xdist loadscope grouping — kept tests as module-level functions (not classes) so pytest-xdist groups them all on one worker; do NOT convert to classes without pinning xdist_group. Shared cross-test state is stored on pytest module attrs (pytest.session_id_login, pytest.upload_id, pytest.map_id_1/2). Pre-existing flake: test_iteration6_collab TestEditorPrivileges errors when run alongside other files under parallel xdist; passes 34/34 in isolation. Local sessions have auth_type='local' and access_token=None."
+}

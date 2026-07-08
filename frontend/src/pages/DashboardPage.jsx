@@ -10,12 +10,13 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Map as MapIcon, LogOut, ChevronDown, Plus, Share2, UserCog } from "lucide-react";
+import { Map as MapIcon, LogOut, ChevronDown, Plus, Share2, UserCog, RefreshCw } from "lucide-react";
 import ControlPanel from "@/components/ControlPanel";
 import MapView from "@/components/MapView";
 import EditPointSheet from "@/components/EditPointSheet";
 import CreateMapDialog from "@/components/CreateMapDialog";
 import ShareDialog from "@/components/ShareDialog";
+import BatchUpdateDialog from "@/components/BatchUpdateDialog";
 
 export default function DashboardPage() {
   const [user, setUser] = useState(null);
@@ -26,6 +27,7 @@ export default function DashboardPage() {
   const [selectedPoint, setSelectedPoint] = useState(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
+  const [batchOpen, setBatchOpen] = useState(false);
 
   useEffect(() => {
     const u = localStorage.getItem("user");
@@ -286,6 +288,18 @@ export default function DashboardPage() {
             </Button>
           )}
 
+          {maps.length > 0 && (
+            <Button
+              onClick={() => setBatchOpen(true)}
+              variant="outline"
+              size="sm"
+              data-testid="batch-update-btn"
+            >
+              <RefreshCw className="w-4 h-4 mr-1" />
+              <span className="hidden sm:inline">Actualizar mapas</span>
+            </Button>
+          )}
+
           <Button onClick={() => setCreateOpen(true)} className="bg-[#005FB8] hover:bg-[#004A94] text-white" size="sm" data-testid="new-map-btn">
             <Plus className="w-4 h-4 mr-1" /> <span className="hidden sm:inline">Nuevo</span>
           </Button>
@@ -370,6 +384,16 @@ export default function DashboardPage() {
         onOpenChange={setShareOpen}
         map={activeMap}
         onMapUpdated={handleShareUpdate}
+      />
+
+      <BatchUpdateDialog
+        open={batchOpen}
+        onOpenChange={setBatchOpen}
+        maps={maps}
+        onDone={async () => {
+          await refreshMaps();
+          if (activeMapId) await loadMapData(activeMapId);
+        }}
       />
     </div>
   );

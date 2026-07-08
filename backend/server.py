@@ -288,6 +288,131 @@ async def auth_logout(x_session_id: str = Header(...)):
     return {"ok": True}
 
 
+# ============ Local Auth (email + password) ============
+
+import bcrypt
+import re
+
+
+class LocalSignup(BaseModel):
+    email: str
+    password: str
+    display_name: Optional[str] = None
+
+
+class LocalLogin(BaseModel):
+    email: str
+    password: str
+
+
+def _hash_password(pw: str) -> str:
+    return bcrypt.hashpw(pw.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+
+
+def _verify_password(pw: str, hashed: str) -> bool:
+    try:
+        return bcrypt.checkpw(pw.encode("utf-8"), hashed.encode("utf-8"))
+    except (ValueError, TypeError):
+        return False
+
+
+EMAIL_RE = re.compile(r"^[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}$")
+
+
+async def _create_local_session(user_doc: dict) -> str:
+    session_id = str(uuid.uuid4())
+    await db.sessions.insert_one({
+        "session_id": session_id,
+        "user_id": user_doc["id"],
+        "auth_type": "local",
+        "display_name": user_doc.get("display_name"),
+        "email": user_doc["email"],
+        "access_token": None,
+        "refresh_token": None,
+        "created_at": now_iso(),
+        "updated_at": now_iso(),
+    })
+    return session_id
+
+
+@api_router.post("/auth/local/signup")
+async def local_signup(payload: LocalSignup):
+    email = (payload.email or "").strip().lower()
+    if not EMAIL_RE.match(email):
+        raise HTTPException(status_code=400, detail="Email inválido")
+    if len(payload.password) < 8:
+        raise HTTPException(status_code=400, detail="La contraseña debe tener al menos 8 caracteres")
+    existing = await db.users.find_one({"email": email})
+    if existing:
+        raise HTTPException(status_code=409, detail="Ya existe una cuenta con ese email")
+    user_id = f"local:{uuid.uuid4()}"
+    user_doc = {
+        "id": user_id,
+        "email": email,
+        "password_hash": _hash_password(payload.password),
+        "display_name": (payload.display_name or email.split("@")[0]).strip() or email.split("@")[0],
+        "created_at": now_iso(),
+    }
+    await db.users.insert_one(user_doc)
+    session_id = await _create_local_session(user_doc)
+    return {
+        "session_id": session_id,
+        "user": {"id": user_id, "email": email, "display_name": user_doc["display_name"]},
+    }
+
+
+@api_router.post("/auth/local/login")
+async def local_login(payload: LocalLogin):
+    email = (payload.email or "").strip().lower()
+    user = await db.users.find_one({"email": email})
+    # Generic message to prevent user enumeration
+    if not user or not _verify_password(payload.password, user.get("password_hash", "")):
+        raise HTTPException(status_code=401, detail="Email o contraseña incorrectos")
+    session_id = await _create_local_session(user)
+    return {
+        "session_id": session_id,
+        "user": {"id": user["id"], "email": user["email"], "display_name": user.get("display_name")},
+    }
+
+
+# ============ Batch update maps source ============
+
+class BatchRefreshPayload(BaseModel):
+    map_ids: List[str]
+    upload_id: str
+
+
+@api_router.post("/maps/batch-refresh-source")
+async def batch_refresh_source(payload: BatchRefreshPayload, x_session_id: str = Header(...)):
+    """Update multiple maps to point to a new uploaded file. The user must own each map
+    AND own the new upload. This is how a user re-uploads a fresh version of the .xlsx
+    and applies it to all maps that used the previous version."""
+    s = await get_session(x_session_id)
+    upload = await db.uploads.find_one({"id": payload.upload_id, "user_id": s["user_id"]}, {"data": 0})
+    if not upload:
+        raise HTTPException(status_code=404, detail="Archivo subido no encontrado")
+    if not payload.map_ids:
+        return {"updated": 0, "map_ids": []}
+    # Verify ownership of all maps
+    owned = await db.maps.find(
+        {"id": {"$in": payload.map_ids}, "user_id": s["user_id"]},
+        {"id": 1, "_id": 0},
+    ).to_list(500)
+    owned_ids = [m["id"] for m in owned]
+    if not owned_ids:
+        raise HTTPException(status_code=404, detail="Ninguno de los mapas es tuyo")
+    await db.maps.update_many(
+        {"id": {"$in": owned_ids}, "user_id": s["user_id"]},
+        {"$set": {
+            "source": "upload",
+            "file_id": payload.upload_id,
+            "file_name": upload["filename"],
+            "updated_at": now_iso(),
+        }},
+    )
+    return {"updated": len(owned_ids), "map_ids": owned_ids}
+
+
 # ============ OneDrive Excel ============
 
 @api_router.get("/onedrive/files")
@@ -996,6 +1121,14 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.on_event("startup")
+async def startup_indexes():
+    try:
+        await db.users.create_index("email", unique=True)
+    except Exception as e:
+        logger.warning(f"users email index: {e}")
 
 
 @app.on_event("shutdown")
