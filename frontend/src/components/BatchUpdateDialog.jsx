@@ -10,7 +10,6 @@ import {
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import {
   UploadCloud,
@@ -183,7 +182,7 @@ export default function BatchUpdateDialog({ open, onOpenChange, maps, onDone }) 
             {eligibleMaps.length === 0 ? (
               <p className="text-sm text-slate-500 text-center py-8">No tienes mapas propios para actualizar.</p>
             ) : (
-              <ScrollArea className="flex-1 border border-slate-200 rounded-lg thin-scroll">
+              <div className="flex-1 side-scroll border border-slate-200 rounded-lg" style={{ minHeight: "180px", maxHeight: "320px" }}>
                 <div className="p-2 space-y-1">
                   {eligibleMaps.map((m) => (
                     <label
@@ -206,7 +205,7 @@ export default function BatchUpdateDialog({ open, onOpenChange, maps, onDone }) 
                     </label>
                   ))}
                 </div>
-              </ScrollArea>
+              </div>
             )}
             <p className="text-[10px] text-slate-500 mt-2">
               💡 Los rangos de filas, columnas geo y demás configuración de cada mapa se conservan. Solo cambia el archivo fuente.

@@ -1,5 +1,4 @@
 import { useMemo } from "react";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { Info } from "lucide-react";
 
 // Convert 0-based col index to Excel letter (A, B, ..., Z, AA, AB, ...)
@@ -64,7 +63,7 @@ export default function SheetGridPicker({ grid, headerRow, firstCol, onSelect })
       </div>
 
       <div className="border border-slate-200 rounded-lg overflow-hidden bg-white">
-        <ScrollArea className="w-full max-h-[280px] thin-scroll">
+        <div className="w-full max-h-[380px] side-scroll">
           <div className="min-w-max">
             <table className="text-xs border-collapse" data-testid="sheet-grid">
               <thead>
@@ -118,7 +117,7 @@ export default function SheetGridPicker({ grid, headerRow, firstCol, onSelect })
               </tbody>
             </table>
           </div>
-        </ScrollArea>
+        </div>
       </div>
 
       <div className="flex items-center justify-between text-xs text-slate-500 px-1">
