@@ -61,6 +61,9 @@ export default function MapView({ mapData, loading, onMarkerClick, selectedPoint
           {validPoints.map((p) => {
             const isSelected = selectedPoint?.row_index === p.row_index;
             const isDimmed = p.visible === false;
+            const isVisited = p.visited === true;
+            // Priority: visited (green) > edited (amber) > default (blue)
+            const bg = isVisited ? "bg-emerald-500" : (p.edited ? "bg-amber-500" : "bg-[#005FB8]");
             return (
               <AdvancedMarker
                 key={p.row_index}
@@ -74,12 +77,10 @@ export default function MapView({ mapData, loading, onMarkerClick, selectedPoint
                   style={{ opacity: isDimmed ? 0.25 : 1 }}
                   data-testid={`marker-${p.row_index}`}
                 >
-                  <div className={`w-6 h-6 rounded-full border-2 border-white shadow-lg flex items-center justify-center
-                    ${p.edited ? "bg-amber-500" : "bg-[#005FB8]"} ${isSelected ? "marker-active" : ""}`}>
+                  <div className={`w-6 h-6 rounded-full border-2 border-white shadow-lg flex items-center justify-center ${bg} ${isSelected ? "marker-active" : ""}`}>
                     <div className="w-2 h-2 rounded-full bg-white" />
                   </div>
-                  <div className={`absolute -bottom-1 left-1/2 -translate-x-1/2 w-3 h-3 rotate-45
-                    ${p.edited ? "bg-amber-500" : "bg-[#005FB8]"} border-r-2 border-b-2 border-white`} />
+                  <div className={`absolute -bottom-1 left-1/2 -translate-x-1/2 w-3 h-3 rotate-45 ${bg} border-r-2 border-b-2 border-white`} />
                 </div>
               </AdvancedMarker>
             );

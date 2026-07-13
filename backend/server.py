@@ -1077,6 +1077,28 @@ async def disable_share(map_id: str, x_session_id: str = Header(...)):
     return {"is_public": False}
 
 
+VISIT_TTL_HOURS = 12
+
+
+def _active_visits(m: dict) -> Dict[str, str]:
+    """Return only visits whose timestamp is within the TTL window."""
+    visits = m.get("public_visits") or {}
+    if not visits:
+        return {}
+    now = datetime.now(timezone.utc)
+    active = {}
+    for row_idx, iso_ts in visits.items():
+        try:
+            ts = datetime.fromisoformat(iso_ts.replace("Z", "+00:00"))
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=timezone.utc)
+            if (now - ts).total_seconds() < VISIT_TTL_HOURS * 3600:
+                active[str(row_idx)] = iso_ts
+        except (ValueError, AttributeError):
+            continue
+    return active
+
+
 @api_router.get("/public/maps/{share_token}")
 async def public_map(share_token: str):
     """Serves cached snapshot of a shared map. No auth required."""
@@ -1088,6 +1110,14 @@ async def public_map(share_token: str):
         raise HTTPException(status_code=404, detail="Mapa no encontrado o no compartido")
     cached_rows = m.get("cached_rows") or []
     cached_headers = m.get("cached_headers") or []
+    active_visits = _active_visits(m)
+    # Attach 'visited' flag to each row
+    rows_with_visits = []
+    for r in cached_rows:
+        row_copy = dict(r)
+        row_copy["visited"] = str(r.get("row_index")) in active_visits
+        row_copy["visited_at"] = active_visits.get(str(r.get("row_index")))
+        rows_with_visits.append(row_copy)
     return {
         "map": {
             "id": m.get("id"),
@@ -1102,9 +1132,53 @@ async def public_map(share_token: str):
         "lat_column": m.get("lat_column"),
         "lng_column": m.get("lng_column"),
         "status_column": m.get("status_column"),
-        "rows": cached_rows,
+        "rows": rows_with_visits,
         "cached_at": m.get("cached_at"),
+        "visit_ttl_hours": VISIT_TTL_HOURS,
     }
+
+
+@api_router.post("/public/maps/{share_token}/visits/{row_index}")
+async def public_mark_visit(share_token: str, row_index: int):
+    """Anonymous visitor marks a point as visited. Auto-expires after VISIT_TTL_HOURS."""
+    m = await db.maps.find_one(
+        {"share_token": share_token, "is_public": True},
+        {"id": 1, "public_visits": 1},
+    )
+    if not m:
+        raise HTTPException(status_code=404, detail="Mapa no encontrado o no compartido")
+    now = now_iso()
+    # Clean expired entries and add the new one
+    active = _active_visits(m)
+    active[str(row_index)] = now
+    await db.maps.update_one(
+        {"id": m["id"]},
+        {"$set": {"public_visits": active}},
+    )
+    return {
+        "row_index": row_index,
+        "visited": True,
+        "visited_at": now,
+        "expires_in_hours": VISIT_TTL_HOURS,
+    }
+
+
+@api_router.delete("/public/maps/{share_token}/visits/{row_index}")
+async def public_clear_visit(share_token: str, row_index: int):
+    """Visitor unchecks visited state."""
+    m = await db.maps.find_one(
+        {"share_token": share_token, "is_public": True},
+        {"id": 1, "public_visits": 1},
+    )
+    if not m:
+        raise HTTPException(status_code=404, detail="Mapa no encontrado o no compartido")
+    active = _active_visits(m)
+    active.pop(str(row_index), None)
+    await db.maps.update_one(
+        {"id": m["id"]},
+        {"$set": {"public_visits": active}},
+    )
+    return {"row_index": row_index, "visited": False}
 
 
 @api_router.get("/")
